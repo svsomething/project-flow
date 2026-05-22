@@ -4,15 +4,12 @@ Personal [Claude Code](https://claude.ai/code) plugin — custom skills, command
 
 ## Install
 
-```bash
-claude plugin install github:svsomething/skills
-```
-
-Or clone and install locally:
+Clone and register the local marketplace, then install:
 
 ```bash
 git clone git@github.com:svsomething/skills.git ~/repos/skills
-claude plugin install ~/repos/skills
+claude plugin marketplace add ~/repos/skills
+claude plugin install sv-skills
 ```
 
 ## Directory layout
