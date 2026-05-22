@@ -1,0 +1,18 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "sv-skills",
+  "description": "Personal Claude Code skills, commands, and agents",
+  "owner": {
+    "name": "Scott Vsomething"
+  },
+  "plugins": [
+    {
+      "name": "sv-skills",
+      "description": "Personal Claude Code skills, commands, and agents",
+      "author": {
+        "name": "Scott Vsomething"
+      },
+      "source": "./plugins/sv-skills"
+    }
+  ]
+}
