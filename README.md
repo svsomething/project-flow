@@ -16,24 +16,30 @@ claude plugin install sv-skills
 
 ```
 skills/
-├── .claude-plugin/   # Plugin manifest
-├── skills/           # Custom skills (invoked by Claude automatically or via /skill-name)
-├── commands/         # Slash commands (invoked by user as /command-name)
-├── agents/           # Custom agents
-└── docs/             # Authoring notes, workflow docs, experiments
+├── .claude-plugin/
+│   ├── marketplace.json          # Marketplace manifest (lists plugins in this repo)
+│   └── plugin.json               # Top-level plugin identity (unused at runtime)
+├── plugins/
+│   └── sv-skills/                # The actual installable plugin
+│       ├── .claude-plugin/
+│       │   └── plugin.json       # Plugin manifest
+│       ├── skills/               # Skills (triggered automatically or via /name)
+│       ├── commands/             # Slash commands (user-invoked as /name)
+│       └── agents/               # Sub-agents
+└── docs/                         # Authoring guide, workflow notes, experiments
 ```
 
 ### skills/ vs commands/ vs agents/
 
 | Type | File | Triggered by | Best for |
 |------|------|-------------|----------|
-| Skill | `skills/<name>/SKILL.md` | Claude automatically, or user types `/<name>` | Reusable multi-step workflows |
-| Command | `commands/<name>.md` | User types `/<name>` | Quick user-initiated actions |
-| Agent | `agents/<name>.md` | `claude --agent <name>` or spawned by skills | Specialized autonomous sub-agents |
+| Skill | `plugins/sv-skills/skills/<name>/SKILL.md` | Claude automatically, or user types `/<name>` | Reusable multi-step workflows |
+| Command | `plugins/sv-skills/commands/<name>.md` | User types `/<name>` | Quick user-initiated actions |
+| Agent | `plugins/sv-skills/agents/<name>.md` | `claude --agent <name>` or spawned by skills | Specialized autonomous sub-agents |
 
 ## Authoring a skill
 
-Create `skills/<name>/SKILL.md` with this frontmatter:
+Create `plugins/sv-skills/skills/<name>/SKILL.md` with this frontmatter:
 
 ```yaml
 ---
@@ -44,6 +50,6 @@ tools: Read, Bash, Edit, Write
 ```
 
 Then write the body as a phased workflow (Phase 1, Phase 2, …).  
-Reference files go in `skills/<name>/references/`.
+Reference files go in `plugins/sv-skills/skills/<name>/references/`.
 
 See `docs/README.md` for the full authoring guide.
