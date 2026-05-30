@@ -8,10 +8,11 @@ Public Claude Code plugin (`sv-skills`) for a single developer. Automates the de
 
 ## Current state
 
-- **Two skills implemented:** `pr-workflow` (create PR with rich context) and `context-update` (maintain CONTEXT.md files).
+- **Three skills implemented:** `pr-workflow` (create PR with rich context), `context-update` (maintain CONTEXT.md and README.md), and `project-workflow` (handle plan/implement actions for kanban issues).
 - **No commands or agents yet.** `commands/` and `agents/` are empty placeholders.
 - Plugin is installed locally via `claude plugin marketplace add ~/repos/skills`.
 - Repo is public on GitHub at `svsomething/skills`.
+- `svsomething-bot` is a separate GitHub account used for all bot-posted comments and GraphQL mutations — needed because PR authors can't approve their own PRs.
 
 ## Key decisions
 
@@ -19,6 +20,7 @@ Public Claude Code plugin (`sv-skills`) for a single developer. Automates the de
 - **Public repo.** Skills are general-purpose workflow automation, nothing sensitive.
 - **Mixed structure** (plugin + docs/experiments). `docs/` holds authoring guides and an experiments log alongside the plugin content.
 - **`author` field must be an object** in `plugin.json` — `{"name": "..."}`, not a plain string. The validator rejects a string.
+- **Mini-agentic kanban** drives autonomous issue handling. GitHub Project #1 (`svsomething/skills`) is the board. `project-monitor` in infra polls it, dispatches Claude with plan/implement actions, and `project-workflow` executes them. The bot account posts plans as comments; the user moves cards to signal approval.
 
 ## Plugin install flow
 
@@ -37,7 +39,9 @@ claude plugin marketplace update sv-skills     # picks up new skills after commi
 
 ## Relationships
 
-- [`infra`](https://github.com/svsomething/infra) — the `pr-monitor` cron script (at `infra/scripts/pr-monitor`) is the other half of the PR workflow loop that `pr-workflow` skill initiates.
+- [`infra`](https://github.com/svsomething/infra) — two scripts are the other halves of the automation loops:
+  - `pr-monitor` (at `infra/scripts/pr-monitor`) responds to PR review comments and triggers Claude to address them
+  - `project-monitor` (at `infra/scripts/project-monitor`) polls GitHub Project #1, detects plan/implement actions, and dispatches Claude via `project-workflow`
 
 ## What to watch for
 

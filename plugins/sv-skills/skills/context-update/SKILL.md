@@ -6,11 +6,11 @@ tools: Read, Bash, Edit, Write
 
 # Context Update
 
-Keep `CONTEXT.md` accurate and useful for AI assistants (Claude web, Claude Code in a fresh session).
+Keep `CONTEXT.md` and `README.md` accurate and useful — CONTEXT.md for AI assistants, README.md for humans browsing the repo.
 
 ## Phase 1: Understand what changed
 
-1. Read the current `CONTEXT.md` (if it exists)
+1. Read the current `CONTEXT.md` and `README.md` (if they exist)
 2. Get recent history:
    ```bash
    git log --oneline -20
@@ -26,7 +26,7 @@ Keep `CONTEXT.md` accurate and useful for AI assistants (Claude web, Claude Code
    find . -name "*.md" -not -path "./.git/*" | head -20
    ```
 
-## Phase 2: Identify what needs updating
+## Phase 2: Identify what needs updating in CONTEXT.md
 
 Compare current `CONTEXT.md` against actual repo state. Flag sections that are:
 - **Stale** — describe things that no longer exist or have changed
@@ -40,7 +40,7 @@ Focus on:
 - **Relationships** — new dependencies or integrations with other repos
 - **What to watch for** — gotchas or constraints a fresh AI should know
 
-## Phase 3: Rewrite affected sections
+## Phase 3: Rewrite affected sections of CONTEXT.md
 
 Edit `CONTEXT.md` in place — update only the sections that changed. Preserve sections that are still accurate.
 
@@ -51,6 +51,15 @@ Rules for good CONTEXT.md content:
 - Be dense — no introductory fluff, no headers that restate the obvious
 - Current state should always reflect reality, not aspirations
 
-## Phase 4: Confirm
+## Phase 4: Identify what needs updating in README.md
 
-Show a brief diff summary of what changed in `CONTEXT.md` and why. Don't ask for approval — just report what was updated and flag anything uncertain.
+Compare `README.md` against actual repo state. Focus on human-facing accuracy:
+- **Skills table** (if this is the skills repo) — does it list all skills that exist in `plugins/sv-skills/skills/`? Add rows for any missing skills.
+- **Workflow sections** — do they accurately describe the current automation loops?
+- **Directory layout** — is the structure still accurate?
+
+Only update sections that are actually stale. Preserve what's correct.
+
+## Phase 5: Confirm
+
+Show a brief diff summary of what changed in both files and why. Don't ask for approval — just report what was updated and flag anything uncertain.
