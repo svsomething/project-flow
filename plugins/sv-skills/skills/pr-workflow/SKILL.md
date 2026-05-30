@@ -57,6 +57,11 @@ Turn the current implementation into a GitHub PR ready for human review.
 
 ## Phase 3: Create the PR
 
+All `gh` commands must run with the bot token so PRs are opened as `svsomething-bot`:
+```bash
+export GH_TOKEN=$(cat ~/.config/bot-gh-token)
+```
+
 Create the PR using this body template. Fill every section from conversation context — do not leave placeholders.
 
 ```bash
