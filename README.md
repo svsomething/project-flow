@@ -1,10 +1,8 @@
 # skills
 
-Personal [Claude Code](https://claude.ai/code) plugin — custom skills, commands, and agents.
+Personal [Claude Code](https://claude.ai/code) plugin — custom skills, commands, and agents for automating development workflows.
 
 ## Install
-
-Clone and register the local marketplace, then install:
 
 ```bash
 git clone git@github.com:svsomething/skills.git ~/repos/skills
@@ -12,44 +10,49 @@ claude plugin marketplace add ~/repos/skills
 claude plugin install sv-skills
 ```
 
+## What's included
+
+| Skill | Trigger | What it does |
+|-------|---------|--------------|
+| [pr-workflow](plugins/sv-skills/skills/pr-workflow/SKILL.md) | "submit as PR", "open a PR", "push for review" | Creates a feature branch, commits, pushes, opens a GitHub PR with rich context |
+| [context-update](plugins/sv-skills/skills/context-update/SKILL.md) | "update context", or after a meaningful merge | Rewrites `CONTEXT.md` in the current repo to reflect recent changes |
+
+## PR review workflow
+
+This plugin powers a full human-in-the-loop review loop:
+
+1. Discuss a change with Claude → agree on a plan
+2. Claude implements on a feature branch and opens a PR (via `pr-workflow`)
+3. Review and comment on GitHub — Claude addresses comments automatically (via `pr-monitor` cron)
+4. Approve the PR → auto-merged to main
+
+The `pr-monitor` cron script lives in [infra/scripts/pr-monitor](https://github.com/svsomething/infra/blob/main/scripts/pr-monitor).
+
 ## Directory layout
 
 ```
 skills/
 ├── .claude-plugin/
-│   ├── marketplace.json          # Marketplace manifest (lists plugins in this repo)
-│   └── plugin.json               # Top-level plugin identity (unused at runtime)
+│   ├── marketplace.json          # Lists this repo as a marketplace
+│   └── plugin.json               # Top-level plugin identity
 ├── plugins/
-│   └── sv-skills/                # The actual installable plugin
+│   └── sv-skills/
 │       ├── .claude-plugin/
-│       │   └── plugin.json       # Plugin manifest
-│       ├── skills/               # Skills (triggered automatically or via /name)
-│       ├── commands/             # Slash commands (user-invoked as /name)
+│       │   └── plugin.json       # Plugin manifest (name, version, author)
+│       ├── skills/               # Skills — triggered automatically or via /name
+│       ├── commands/             # Slash commands — user-invoked as /name
 │       └── agents/               # Sub-agents
-└── docs/                         # Authoring guide, workflow notes, experiments
+└── docs/
+    └── README.md                 # Authoring guide and frontmatter reference
 ```
 
-### skills/ vs commands/ vs agents/
+## Adding a skill
 
-| Type | File | Triggered by | Best for |
-|------|------|-------------|----------|
-| Skill | `plugins/sv-skills/skills/<name>/SKILL.md` | Claude automatically, or user types `/<name>` | Reusable multi-step workflows |
-| Command | `plugins/sv-skills/commands/<name>.md` | User types `/<name>` | Quick user-initiated actions |
-| Agent | `plugins/sv-skills/agents/<name>.md` | `claude --agent <name>` or spawned by skills | Specialized autonomous sub-agents |
+1. `mkdir plugins/sv-skills/skills/<name>`
+2. Create `SKILL.md` — see [docs/README.md](docs/README.md) for the frontmatter spec
+3. Commit and run `claude plugin marketplace update sv-skills`
 
-## Authoring a skill
+## Related
 
-Create `plugins/sv-skills/skills/<name>/SKILL.md` with this frontmatter:
-
-```yaml
----
-name: my-skill
-description: One sentence. Use when user asks X, mentions Y, or Z occurs.
-tools: Read, Bash, Edit, Write
----
-```
-
-Then write the body as a phased workflow (Phase 1, Phase 2, …).  
-Reference files go in `plugins/sv-skills/skills/<name>/references/`.
-
-See `docs/README.md` for the full authoring guide.
+- [infra](https://github.com/svsomething/infra) — home server infrastructure and dotfiles
+- [Claude Code docs](https://docs.claude.ai/code)
