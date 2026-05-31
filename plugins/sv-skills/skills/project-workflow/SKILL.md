@@ -28,10 +28,11 @@ export GH_TOKEN=$(cat ~/.config/bot-gh-token)
 
 Read the invoking context to identify:
 - **Issue number** and **repo** (e.g. `svsomething/infra`)
-- **Action**: one of `plan`, `iterate`, or `implement`
+- **Action**: one of `plan`, `iterate`, `implement`, or `done`
   - `plan` — no bot comment exists yet on this issue
   - `iterate` — bot has posted a plan; there are new user comments since the last bot reply
   - `implement` — issue is in the Implement column
+  - `done` — all PRs linked to the issue are approved; merge them and wrap up
 
 If not provided directly, run:
 ```bash
@@ -92,14 +93,19 @@ Beginning work now. I will open PRs when complete."
    - Make all changes per the plan
    - Commit with descriptive messages
 
-4. **Open PR(s)** — include `Closes #<N>` in the body:
+4. **Open PR(s)** — include `Closes #<N>` and a post-merge block in the body:
 ```bash
 gh pr create -R <repo> \
   --title "<title>" \
   --body "Closes #<N>
 
 ## Summary
-<what was implemented>"
+<what was implemented>
+
+<!-- post-merge
+pull: ~/repos/skills ~/repos/infra
+run: <optional shell commands, e.g. docker-compose up -d — omit line if none needed>
+-->"
 ```
 
 5. **Move card to In Review** via GraphQL mutation:
@@ -140,6 +146,83 @@ PRs opened:
 - <PR URL>
 
 The card has been moved to In Review."
+```
+
+### Action: done
+
+All PRs linked to the issue are approved. Squash-merge them, update all repos, run post-merge steps, and close out the card.
+
+1. **Signal start:**
+```bash
+gh issue comment <N> -R <repo> --body "## Merging PRs
+
+All PRs are approved. Squash-merging and wrapping up now."
+```
+
+2. **Find all open PRs linked to the issue** (use the implementation comment or search):
+```bash
+export GH_TOKEN=$(cat ~/.config/bot-gh-token)
+gh pr list -R <repo> --search "Closes #<N> is:open" --json number,title,headRefName,body
+```
+
+3. **Verify all are still APPROVED** (guard against a race condition):
+```bash
+gh pr view <PR-number> -R <repo> --json reviewDecision
+```
+If any PR is not `APPROVED`, abort and post a comment explaining why.
+
+4. **Squash-merge each PR and delete the branch:**
+```bash
+gh pr merge <PR-number> -R <repo> --squash --delete-branch
+```
+
+5. **Pull all repos to latest main:**
+```bash
+git -C ~/repos/skills pull origin main
+git -C ~/repos/infra pull origin main
+```
+
+6. **Run post-merge commands** — for each PR body, parse the `<!-- post-merge ... -->` block:
+   - Extract any `run:` lines and execute them as shell commands
+   - Skip if no block or no `run:` line present
+
+7. **Move card to Done:**
+```bash
+gh api graphql -f query='
+mutation {
+  updateProjectV2ItemFieldValue(input: {
+    projectId: "PVT_kwHOERrops4BZOd2"
+    itemId: "<project-item-id>"
+    fieldId: "PVTSSF_lAHOERrops4BZOd2zhUOqxg"
+    value: { singleSelectOptionId: "98236657" }
+  }) { projectV2Item { id } }
+}'
+```
+
+   Get the project item ID from the invoking context, or query:
+```bash
+gh api graphql -f query='
+{
+  user(login: "svsomething") {
+    projectV2(number: 1) {
+      items(first: 50) {
+        nodes {
+          id
+          content { ... on Issue { number } }
+        }
+      }
+    }
+  }
+}'
+```
+
+8. **Post completion summary:**
+```bash
+gh issue comment <N> -R <repo> --body "## Done
+
+All PRs squash-merged, branches deleted, repos pulled to latest main.
+
+The card has been moved to Done."
 ```
 
 ## Phase 3: Confirm
