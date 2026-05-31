@@ -104,9 +104,13 @@ gh pr create -R <repo> \
 
 <!-- post-merge
 pull: ~/repos/skills ~/repos/infra
-run: <optional shell commands, e.g. docker-compose up -d — omit line if none needed>
+run: <optional shell commands, e.g. docker restart homeassistant — omit line if none needed>
 -->"
 ```
+
+   **Permission notes (no sudo needed):**
+   - `~/docker-data/` is owned by `scottv` — use plain `cp`, not `sudo cp`
+   - `scottv` is in the `docker` group — use `docker` commands directly, not `sudo docker`
 
 5. **Move card to In Review** via GraphQL mutation:
 ```bash
