@@ -93,7 +93,7 @@ Beginning work now. I will open PRs when complete."
    - Make all changes per the plan
    - Commit with descriptive messages
 
-4. **Open PR(s)** — include `Closes #<N>` and a post-merge block in the body:
+4. **Open PR(s)** — include `Closes #<N>` in the body. If there are post-merge steps, append a `## Post-merge` section; omit it entirely if there are none:
 ```bash
 gh pr create -R <repo> \
   --title "<title>" \
@@ -102,11 +102,12 @@ gh pr create -R <repo> \
 ## Summary
 <what was implemented>
 
-<!-- post-merge
-pull: ~/repos/skills ~/repos/infra
-run: <optional shell commands, e.g. docker restart homeassistant — omit line if none needed>
--->"
+## Post-merge
+- pull: \`~/repos/skills\` \`~/repos/infra\`
+- run: \`<shell command, e.g. docker restart homeassistant>\`"
 ```
+
+   Omit the `## Post-merge` section entirely when there are no post-merge steps.
 
    **Permission notes (no sudo needed):**
    - `~/docker-data/` is owned by `scottv` — use plain `cp`, not `sudo cp`
@@ -193,9 +194,9 @@ git -C ~/repos/infra  checkout main && git -C ~/repos/infra  pull origin main
    - Update `CONTEXT.md` (and `README.md` if applicable) in that repo to reflect what changed — same scope as the `context-update` skill
    - Only run for repos that had PRs merged in this issue; skip unaffected repos
 
-6. **Run post-merge commands** — for each PR body, parse the `<!-- post-merge ... -->` block:
-   - Extract any `run:` lines and execute them as shell commands
-   - Skip if no block or no `run:` line present
+6. **Run post-merge commands** — for each PR body, parse the `## Post-merge` section:
+   - Extract any `- run: \`...\`` lines and execute them as shell commands
+   - Skip if no `## Post-merge` section or no `run:` lines are present
 
 7. **Move card to Done:**
 ```bash
