@@ -163,21 +163,23 @@ gh issue comment <N> -R <repo> --body "## Merging PRs
 All PRs are approved. Squash-merging and wrapping up now."
 ```
 
-2. **Find all open PRs linked to the issue** (use the implementation comment or search):
+2. **Find all open PRs linked to the issue** — prefer the list passed in the invoking prompt (e.g. "PRs to merge: #10 in svsomething/skills, #24 in svsomething/infra"). If no list was provided, fall back to the timeline API (which covers cross-repo PRs):
 ```bash
 export GH_TOKEN=$(cat ~/.config/bot-gh-token)
-gh pr list -R <repo> --search "Closes #<N> is:open" --json number,title,headRefName,body
+gh api repos/<repo>/issues/<N>/timeline --paginate \
+  --jq '[.[] | select(.event=="cross-referenced") | select(.source.issue.pull_request != null) | .source.issue | {number: .number, state: .state, repo: .repository.full_name}] | map(select(.state=="open"))'
 ```
 
-3. **Verify all are still APPROVED** (guard against a race condition):
+3. **Verify all are still APPROVED** (guard against a race condition) — use each PR's own repo:
 ```bash
-gh pr view <PR-number> -R <repo> --json reviewDecision
+gh pr view <PR-number> -R <pr-repo> --json reviewDecision,reviews
 ```
-If any PR is not `APPROVED`, abort and post a comment explaining why.
+A PR is approved if `reviewDecision == "APPROVED"` **or** any entry in `reviews` has `state == "APPROVED"` (GitHub only sets `reviewDecision` when branch protection requires reviews).
+If any PR is not approved, abort and post a comment explaining why.
 
-4. **Squash-merge each PR and delete the branch:**
+4. **Squash-merge each PR and delete the branch** — use each PR's own repo:
 ```bash
-gh pr merge <PR-number> -R <repo> --squash --delete-branch
+gh pr merge <PR-number> -R <pr-repo> --squash --delete-branch
 ```
 
 5. **Pull all repos to latest main:**
