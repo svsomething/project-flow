@@ -184,8 +184,8 @@ gh pr merge <PR-number> -R <pr-repo> --squash --delete-branch
 
 5. **Pull all repos to latest main:**
 ```bash
-git -C ~/repos/skills pull origin main
-git -C ~/repos/infra pull origin main
+git -C ~/repos/skills checkout main && git -C ~/repos/skills pull origin main
+git -C ~/repos/infra  checkout main && git -C ~/repos/infra  pull origin main
 ```
 
 5.5. **Run context-update for affected repos** — for each repo that received a PR merge:
