@@ -91,7 +91,8 @@ Beginning work now. I will open PRs when complete."
 3. **Implement** in the local repo (e.g. `~/repos/infra` or `~/repos/skills`):
    - Create feature branch: `git checkout -b feat/issue-<N>-<short-description>`
    - Make all changes per the plan
-   - Commit with descriptive messages
+   - Update `CONTEXT.md` (and `README.md` if applicable) in each affected repo to reflect what changed — so the context diff is visible in the PR alongside the code
+   - Commit everything together with descriptive messages
 
 4. **Open PR(s)** — include `Closes #<N>` in the body. If there are post-merge steps, append a `## Post-merge` section; omit it entirely if there are none:
 ```bash
@@ -188,11 +189,6 @@ gh pr merge <PR-number> -R <pr-repo> --squash --delete-branch
 git -C ~/repos/skills checkout main && git -C ~/repos/skills pull origin main
 git -C ~/repos/infra  checkout main && git -C ~/repos/infra  pull origin main
 ```
-
-5.5. **Run context-update for affected repos** — for each repo that received a PR merge:
-   - Read the recent commit: `git -C ~/repos/<repo> show --stat HEAD` and `git -C ~/repos/<repo> log -1`
-   - Update `CONTEXT.md` (and `README.md` if applicable) in that repo to reflect what changed — same scope as the `context-update` skill
-   - Only run for repos that had PRs merged in this issue; skip unaffected repos
 
 6. **Run post-merge commands** — for each PR body, parse the `## Post-merge` section:
    - Extract any `- run: \`...\`` lines and execute them as shell commands

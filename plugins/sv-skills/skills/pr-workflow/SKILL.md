@@ -42,15 +42,22 @@ Turn the current implementation into a GitHub PR ready for human review.
    git checkout -b <branch-name>
    ```
 
-3. Stage and commit any uncommitted changes:
+3. **Update CONTEXT.md** before committing so the context diff is part of the PR:
+   - Read the current `CONTEXT.md` in this repo
+   - Review what changed (from the conversation and `git diff`)
+   - Rewrite `CONTEXT.md` to reflect the new state — same scope as the `context-update` skill
+   - If the repo has a `README.md` that summarises capabilities or structure, update it too
+   - Do **not** commit yet — CONTEXT.md will be staged together with the code changes in the next step
+
+4. Stage and commit all changes (code + CONTEXT.md together):
    ```bash
    git add -A
    git status --short   # confirm what's being committed
    git commit -m "<conventional-commit-message>"
    ```
-   If there's nothing to commit, note that and continue.
+   If there is nothing to commit (no code changes and CONTEXT.md is already current), note that and continue.
 
-4. Push to origin:
+5. Push to origin:
    ```bash
    git push -u origin <branch-name>
    ```
