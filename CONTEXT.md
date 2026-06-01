@@ -21,6 +21,7 @@ Public Claude Code plugin (`sv-skills`) for a single developer. Automates the de
 - **Mixed structure** (plugin + docs/experiments). `docs/` holds authoring guides and an experiments log alongside the plugin content.
 - **`author` field must be an object** in `plugin.json` — `{"name": "..."}`, not a plain string. The validator rejects a string.
 - **Mini-agentic kanban** drives autonomous issue handling. GitHub Project #1 (`svsomething/skills`) is the board. `project-monitor` in infra polls it, dispatches Claude with plan/implement actions, and `project-workflow` executes them. The bot account posts plans as comments; the user moves cards to signal approval.
+- **CONTEXT.md is updated as part of the PR, not after merge.** Both `pr-workflow` and `project-workflow` (implement action) update CONTEXT.md before committing, so the context diff is visible during review alongside the code changes.
 
 ## Plugin install flow
 
