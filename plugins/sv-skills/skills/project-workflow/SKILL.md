@@ -239,3 +239,7 @@ The card has been moved to Done."
 ## Phase 3: Confirm
 
 Report what was done in one concise sentence. No approval needed.
+
+## Automated driver
+
+This skill is designed to be invoked by `project-monitor` (at `infra/scripts/project-monitor`), which polls GitHub Project #1, detects when cards move between columns, and dispatches Claude with the appropriate action (`plan`, `iterate`, `implement`, or `done`). You can also invoke it manually ("plan issue #N", "implement issue #N").
