@@ -8,7 +8,7 @@ Public Claude Code plugin (`sv-skills`) for a single developer. Automates the de
 
 ## Current state
 
-- **Three skills implemented:** `pr-workflow` (create PR with rich context), `context-update` (maintain CONTEXT.md and README.md), and `project-workflow` (handle plan/implement actions for kanban issues).
+- **Three skills implemented:** `pr-workflow` (create PR with rich context), `context-update` (maintain CONTEXT.md and README.md), and `project-workflow` (handle `plan`, `iterate`, `implement`, and `done` actions for kanban issues).
 - **No commands or agents yet.** `commands/` and `agents/` are empty placeholders.
 - Plugin is installed locally via `claude plugin marketplace add ~/repos/skills`.
 - Repo is public on GitHub at `svsomething/skills`.
@@ -40,8 +40,8 @@ claude plugin marketplace update sv-skills     # picks up new skills after commi
 ## Relationships
 
 - [`infra`](https://github.com/svsomething/infra) — two scripts are the other halves of the automation loops:
-  - `pr-monitor` (at `infra/scripts/pr-monitor`) responds to PR review comments and triggers Claude to address them
-  - `project-monitor` (at `infra/scripts/project-monitor`) polls GitHub Project #1, detects plan/implement actions, and dispatches Claude via `project-workflow`
+  - `pr-monitor` (at `infra/scripts/pr-monitor`) polls open PRs, detects new review comments, and dispatches Claude with inline prompts to address them (does not use the `pr-workflow` skill)
+  - `project-monitor` (at `infra/scripts/project-monitor`) polls GitHub Project #1, detects `plan`/`iterate`/`implement`/`done` actions, and dispatches Claude via `project-workflow`
 
 ## What to watch for
 
