@@ -16,7 +16,7 @@ claude plugin install sv-skills
 |-------|---------|--------------|
 | [pr-workflow](plugins/sv-skills/skills/pr-workflow/SKILL.md) | "submit as PR", "open a PR", "push for review" | Creates a feature branch, commits, pushes, opens a GitHub PR with rich context |
 | [context-update](plugins/sv-skills/skills/context-update/SKILL.md) | "update context", or after a meaningful merge | Rewrites `CONTEXT.md` and `README.md` in the current repo to reflect recent changes |
-| [project-workflow](plugins/sv-skills/skills/project-workflow/SKILL.md) | "plan issue", "implement issue", or dispatched by project-monitor | Handles one kanban action (plan or implement) for a GitHub issue on the project board |
+| [project-workflow](plugins/sv-skills/skills/project-workflow/SKILL.md) | "plan issue", "implement issue", or dispatched by project-monitor | Handles one kanban action (`plan`, `iterate`, `implement`, or `done`) for a GitHub issue on the project board |
 
 ## PR review workflow
 
@@ -25,7 +25,7 @@ This plugin powers a full human-in-the-loop review loop:
 1. Discuss a change with Claude → agree on a plan
 2. Claude implements on a feature branch and opens a PR (via `pr-workflow`)
 3. Review and comment on GitHub — Claude addresses comments automatically (via `pr-monitor` cron)
-4. Approve the PR → auto-merged to main
+4. Approve the PR and merge to main (merging is manual — `pr-monitor` addresses comments but does not merge)
 
 The `pr-monitor` cron script lives in [infra/scripts/pr-monitor](https://github.com/svsomething/infra/blob/main/scripts/pr-monitor).
 
@@ -38,7 +38,7 @@ Issues on [GitHub Project #1](https://github.com/users/svsomething/projects/1) d
 3. Review the plan and comment with feedback — `project-monitor` dispatches Claude to iterate
 4. Move the card to **Implement** — `project-monitor` dispatches Claude to implement
 5. Claude opens PRs, moves the card to **In Review**, and posts a summary comment
-6. Approve the PRs → auto-merged; move card to **Done**
+6. Approve the PRs → `project-monitor` detects approval and dispatches the `done` action — Claude squash-merges all PRs, updates context, and moves the card to **Done** automatically
 
 The `project-monitor` cron script lives in [infra/scripts/project-monitor](https://github.com/svsomething/infra/blob/main/scripts/project-monitor).
 

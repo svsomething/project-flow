@@ -186,6 +186,11 @@ git -C ~/repos/skills pull origin main
 git -C ~/repos/infra pull origin main
 ```
 
+5.5. **Run context-update for affected repos** — for each repo that received a PR merge:
+   - Read the recent commit: `git -C ~/repos/<repo> show --stat HEAD` and `git -C ~/repos/<repo> log -1`
+   - Update `CONTEXT.md` (and `README.md` if applicable) in that repo to reflect what changed — same scope as the `context-update` skill
+   - Only run for repos that had PRs merged in this issue; skip unaffected repos
+
 6. **Run post-merge commands** — for each PR body, parse the `<!-- post-merge ... -->` block:
    - Extract any `run:` lines and execute them as shell commands
    - Skip if no block or no `run:` line present
