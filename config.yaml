@@ -1,0 +1,52 @@
+# project-flow configuration
+#
+# Fill in this file to connect project-flow to your GitHub account, repos,
+# and project board. See docs/find-ids.md for how to look up the GraphQL IDs.
+#
+# After editing, no restart is needed — scripts and skills read this file
+# on every invocation.
+
+github:
+  # Your GitHub username or organization name
+  org: svsomething
+
+  # The GitHub account that posts bot comments (plan drafts, status updates).
+  # Must be a separate account from your own — GitHub doesn't allow PR authors
+  # to approve their own PRs, so the bot posts plans while you approve.
+  bot_login: svsomething-bot
+
+  # Path to a file containing ONLY the bot account's GitHub personal access
+  # token. Create a classic token with repo + project scopes.
+  # See docs/setup.md for how to create and scope this token.
+  bot_token_file: ~/.config/bot-gh-token
+
+repos:
+  # Directory that contains your local repo clones.
+  # project-monitor scans this directory for GitHub repos to watch.
+  root: ~/repos
+
+  # Absolute path to your local clone of project-flow.
+  # Used by scripts to locate config.yaml and skills.
+  project_flow: ~/repos/project-flow
+
+project:
+  # The number shown in the GitHub Project URL:
+  # https://github.com/users/<org>/projects/<number>
+  number: 1
+
+  # Node ID of the project. Run the query in docs/find-ids.md to get this.
+  # Looks like: PVT_kwHO...
+  id: PVT_kwHOERrops4BZOd2
+
+  # Node ID of the "Status" single-select field on the project.
+  # Run the query in docs/find-ids.md to get this.
+  # Looks like: PVTSSF_lAH...
+  status_field_id: PVTSSF_lAHOERrops4BZOd2zhUOqxg
+
+  # Option IDs for each column. Run the query in docs/find-ids.md to get these.
+  # Each is an 8-character hex string.
+  columns:
+    plan:      d7e1fd51
+    implement: 61e4505c
+    in_review: df73e18b
+    done:      98236657

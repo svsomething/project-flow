@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""
+project-monitor — polls a GitHub Project v2 board and dispatches Claude
+to handle Plan and Implement column items.
+
+Column logic:
+  Plan      → post a plan as a comment if none exists yet;
+              reply to any user comment not yet responded to
+  Implement → implement the plan autonomously, open PRs, move to In Review
+  In Review → move to Done when all linked PRs are merged
+
+Reads all deployment-specific values from config.yaml (see docs/setup.md).
+Intended to run as a cron job every minute alongside pr-monitor.
+Logs to stdout (redirect to ~/.claude/project-monitor.log in crontab).
+"""
+
+import json
+import os
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("ERROR: PyYAML not installed. Run: pip install pyyaml", flush=True)
+    raise SystemExit(1)
+
+# Locate config.yaml relative to this script (../../config.yaml)
+_SCRIPT_DIR = Path(__file__).resolve().parent
+CONFIG_FILE  = _SCRIPT_DIR.parent / "config.yaml"
+LOCK_FILE    = Path.home() / ".claude" / "project-monitor.lock"
+CLAUDE_BIN   = Path.home() / ".npm-global" / "bin" / "claude"
+
+
+def load_config():
+    if not CONFIG_FILE.exists():
+        raise FileNotFoundError(
+            f"config.yaml not found at {CONFIG_FILE}. "
+            "Copy config.yaml from project-flow and fill in your values."
+        )
+    with open(CONFIG_FILE) as f:
+        return yaml.safe_load(f)
+
+
+def log(msg):
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[{ts}] {msg}", flush=True)
+
+
+def bot_env(cfg):
+    env = os.environ.copy()
+    token_file = Path(cfg["github"]["bot_token_file"]).expanduser()
+    if token_file.exists():
+        env["GH_TOKEN"] = token_file.read_text().strip()
+    return env
+
+
+def gql(query, variables, cfg):
+    payload = {"query": query}
+    if variables:
+        payload["variables"] = variables
+    result = subprocess.run(
+        ["gh", "api", "graphql", "--input", "-"],
+        input=json.dumps(payload),
+        capture_output=True, text=True, env=bot_env(cfg)
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"GraphQL error: {result.stderr.strip()}")
+    data = json.loads(result.stdout)
+    if "errors" in data:
+        raise RuntimeError(f"GraphQL errors: {data['errors']}")
+    return data["data"]
+
+
+def get_plan_items(cfg):
+    """Return project items currently in Plan, Implement, or In Review columns."""
+    owner  = cfg["github"]["org"]
+    number = cfg["project"]["number"]
+    data = gql("""
+    query($owner: String!, $number: Int!) {
+      user(login: $owner) {
+        projectV2(number: $number) {
+          items(first: 50) {
+            nodes {
+              id
+              fieldValueByName(name: "Status") {
+                ... on ProjectV2ItemFieldSingleSelectValue {
+                  name
+                  optionId
+                }
+              }
+              content {
+                ... on Issue {
+                  number
+                  title
+                  body
+                  url
+                  repository {
+                    nameWithOwner
+                  }
+                  comments(last: 50) {
+                    nodes {
+                      databaseId
+                      author { login }
+                      body
+                      createdAt
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }""", {"owner": owner, "number": number}, cfg)
+    return data["user"]["projectV2"]["items"]["nodes"]
+
+
+def move_card(item_id, status_name, cfg):
+    """Move a project card to the given status column."""
+    project_id = cfg["project"]["id"]
+    field_id   = cfg["project"]["status_field_id"]
+    option_id  = cfg["project"]["columns"][status_name.lower().replace(" ", "_")]
+    gql("""
+    mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+      updateProjectV2ItemFieldValue(input: {
+        projectId: $projectId
+        itemId: $itemId
+        fieldId: $fieldId
+        value: { singleSelectOptionId: $optionId }
+      }) {
+        projectV2Item { id }
+      }
+    }""", {
+        "projectId": project_id,
+        "itemId":    item_id,
+        "fieldId":   field_id,
+        "optionId":  option_id,
+    }, cfg)
+    log(f"  Moved card to {status_name}")
+
+
+def invoke_claude(prompt, cfg, cwd=None):
+    """Invoke Claude non-interactively with the project-workflow skill available."""
+    cmd = [str(CLAUDE_BIN), "-p", prompt,
+           "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep"]
+    log(f"  Invoking Claude")
+    subprocess.run(cmd, cwd=cwd or Path.home(), env=bot_env(cfg), text=True)
+
+
+def handle_plan(item_id, issue, cfg):
+    number    = issue["number"]
+    repo      = issue["repository"]["nameWithOwner"]
+    comments  = issue["comments"]["nodes"]
+    bot_login = cfg["github"]["bot_login"]
+    bot_comments  = [c for c in comments if c["author"]["login"] == bot_login]
+    user_comments = [c for c in comments if c["author"]["login"] != bot_login]
+
+    if not bot_comments:
+        log(f"  Plan: no plan yet for issue #{number}, creating")
+        invoke_claude(
+            f"Use the project-workflow skill. Action: plan. "
+            f"Issue #{number} in {repo} is in the Plan column and has no plan yet.",
+            cfg
+        )
+    else:
+        last_bot_time     = bot_comments[-1]["createdAt"]
+        new_user_comments = [c for c in user_comments if c["createdAt"] > last_bot_time]
+        if new_user_comments:
+            log(f"  Plan: {len(new_user_comments)} new comment(s) on issue #{number}, responding")
+            invoke_claude(
+                f"Use the project-workflow skill. Action: iterate. "
+                f"Issue #{number} in {repo} is in the Plan column and has new user comments to respond to.",
+                cfg
+            )
+        else:
+            log(f"  Plan: no new comments on issue #{number}, waiting")
+
+
+def handle_implement(item_id, issue, cfg):
+    number    = issue["number"]
+    repo      = issue["repository"]["nameWithOwner"]
+    comments  = issue["comments"]["nodes"]
+    bot_login = cfg["github"]["bot_login"]
+    bot_comments = [c for c in comments if c["author"]["login"] == bot_login]
+
+    if any("Starting implementation" in c["body"] for c in bot_comments):
+        log(f"  Implement: issue #{number} already in flight, skipping")
+        return
+
+    log(f"  Implement: starting issue #{number}")
+    repos_root = Path(cfg["repos"]["root"]).expanduser()
+    repo_name  = repo.split("/")[-1]
+    repo_path  = repos_root / repo_name
+    invoke_claude(
+        f"Use the project-workflow skill. Action: implement. "
+        f"Issue #{number} in {repo} is in the Implement column. "
+        f"Project item ID: {item_id}.",
+        cfg,
+        repo_path if repo_path.exists() else None
+    )
+
+
+def get_linked_prs(repo, issue_number, cfg):
+    """Find open or merged PRs that reference this issue via REST timeline."""
+    result = subprocess.run(
+        ["gh", "api", f"repos/{repo}/issues/{issue_number}/timeline",
+         "--paginate", "--jq",
+         "[.[] | select(.event==\"cross-referenced\") "
+         "| select(.source.issue.pull_request != null) "
+         "| .source.issue | {number: .number, state: .state, repo: .repository.full_name, merged: (.pull_request.merged_at != null)}]"],
+        capture_output=True, text=True, env=bot_env(cfg)
+    )
+    if result.returncode != 0:
+        return []
+    try:
+        return json.loads(result.stdout)
+    except Exception:
+        return []
+
+
+def get_pr_review_decision(repo, pr_number, cfg):
+    """Return 'APPROVED' if the PR has any APPROVED review.
+
+    GitHub only sets reviewDecision="APPROVED" when branch protection requires
+    reviews. Without that setting it returns "", so we fall back to the reviews array.
+    """
+    result = subprocess.run(
+        ["gh", "pr", "view", str(pr_number), "-R", repo,
+         "--json", "reviewDecision,reviews"],
+        capture_output=True, text=True, env=bot_env(cfg)
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        data = json.loads(result.stdout)
+        if data.get("reviewDecision") == "APPROVED":
+            return "APPROVED"
+        if any(r.get("state") == "APPROVED" for r in data.get("reviews", [])):
+            return "APPROVED"
+        return data.get("reviewDecision") or "PENDING"
+    except Exception:
+        return None
+
+
+def handle_in_review(item_id, issue, cfg):
+    """Invoke done action when all linked open PRs are approved."""
+    repo      = issue["repository"]["nameWithOwner"]
+    number    = issue["number"]
+    comments  = issue["comments"]["nodes"]
+    bot_login = cfg["github"]["bot_login"]
+    bot_comments = [c for c in comments if c["author"]["login"] == bot_login]
+
+    if any("## Merging PRs" in c["body"] or "## Done" in c["body"] for c in bot_comments):
+        log(f"  In Review: done action already in flight for #{number}, skipping")
+        return
+
+    prs      = get_linked_prs(repo, number, cfg)
+    open_prs = [pr for pr in prs if pr.get("state") == "open"]
+    if not open_prs:
+        return
+
+    decisions = [get_pr_review_decision(pr.get("repo", repo), pr["number"], cfg) for pr in open_prs]
+    if not all(d == "APPROVED" for d in decisions):
+        log(f"  In Review: not all PRs approved for #{number}, waiting")
+        return
+
+    log(f"  In Review: all PRs approved for #{number}, invoking done action")
+    pr_list    = ", ".join(f"#{pr['number']} in {pr.get('repo', repo)}" for pr in open_prs)
+    repos_root = Path(cfg["repos"]["root"]).expanduser()
+    repo_name  = repo.split("/")[-1]
+    repo_path  = repos_root / repo_name
+    invoke_claude(
+        f"Use the project-workflow skill. Action: done. "
+        f"Issue #{number} in {repo} has all PRs approved. "
+        f"PRs to merge: {pr_list}. "
+        f"Project item ID: {item_id}.",
+        cfg,
+        repo_path if repo_path.exists() else None
+    )
+
+
+def main():
+    if LOCK_FILE.exists():
+        log("Lock file present — skipping")
+        return
+
+    LOCK_FILE.touch()
+    try:
+        cfg   = load_config()
+        items = get_plan_items(cfg)
+        active = [
+            i for i in items
+            if i.get("fieldValueByName")
+            and i["fieldValueByName"].get("name") in ("Plan", "Implement", "In Review")
+            and i.get("content")
+        ]
+
+        if not active:
+            log("No active items")
+            return
+
+        log(f"Found {len(active)} active item(s)")
+
+        for item in active:
+            status = item["fieldValueByName"]["name"]
+            issue  = item["content"]
+            log(f"  #{issue['number']} '{issue['title']}' [{status}]")
+
+            if status == "Plan":
+                handle_plan(item["id"], issue, cfg)
+            elif status == "Implement":
+                handle_implement(item["id"], issue, cfg)
+            elif status == "In Review":
+                handle_in_review(item["id"], issue, cfg)
+
+    except Exception as e:
+        log(f"ERROR: {e}")
+        raise
+    finally:
+        LOCK_FILE.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    main()

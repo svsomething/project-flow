@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""
+pr-monitor — scans ~/repos/ for open GitHub PRs, addresses unresolved
+review comments, and auto-merges PRs that are registered in the state
+file and have been approved with no outstanding comments.
+
+Also cleans up state entries for PRs that have already been merged.
+
+Reads all deployment-specific values from config.yaml (see docs/setup.md).
+Intended to run as a cron job every minute alongside project-monitor.
+Logs to stdout (redirect to ~/.claude/pr-monitor.log in crontab).
+"""
+
+import json
+import os
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:
+    print("ERROR: PyYAML not installed. Run: pip install pyyaml", flush=True)
+    raise SystemExit(1)
+
+# Locate config.yaml relative to this script (../../config.yaml)
+_SCRIPT_DIR = Path(__file__).resolve().parent
+CONFIG_FILE  = _SCRIPT_DIR.parent / "config.yaml"
+STATE_FILE   = Path.home() / ".claude" / "pr-monitor-state.json"
+LOCK_FILE    = Path.home() / ".claude" / "pr-monitor.lock"
+CLAUDE_BIN   = Path.home() / ".npm-global" / "bin" / "claude"
+
+
+def load_config():
+    if not CONFIG_FILE.exists():
+        raise FileNotFoundError(
+            f"config.yaml not found at {CONFIG_FILE}. "
+            "Copy config.yaml from project-flow and fill in your values."
+        )
+    with open(CONFIG_FILE) as f:
+        return yaml.safe_load(f)
+
+
+def log(msg):
+    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    print(f"[{ts}] {msg}", flush=True)
+
+
+def bot_env(cfg):
+    """Return env vars with GH_TOKEN set to the bot token."""
+    env = os.environ.copy()
+    token_file = Path(cfg["github"]["bot_token_file"]).expanduser()
+    if token_file.exists():
+        env["GH_TOKEN"] = token_file.read_text().strip()
+    return env
+
+
+def run(cmd, cfg, cwd=None):
+    result = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, env=bot_env(cfg))
+    if result.returncode != 0:
+        raise RuntimeError(f"{cmd}: {result.stderr.strip()}")
+    return result.stdout.strip()
+
+
+def find_repos(cfg):
+    repos_root = Path(cfg["repos"]["root"]).expanduser()
+    repos = set()
+    if STATE_FILE.exists():
+        try:
+            for entry in json.loads(STATE_FILE.read_text()):
+                repos.add(entry["repo"])
+        except Exception:
+            pass
+    if repos_root.exists():
+        for d in repos_root.iterdir():
+            if (d / ".git").exists():
+                try:
+                    remote = run(["git", "remote", "get-url", "origin"], cfg, cwd=d)
+                    if "github.com" in remote:
+                        repos.add(str(d))
+                except Exception:
+                    pass
+    return repos
+
+
+def get_open_prs(repo, cfg):
+    try:
+        out = run(
+            ["gh", "pr", "list", "--state", "open",
+             "--json", "number,headRefName"],
+            cfg, cwd=repo,
+        )
+        return json.loads(out)
+    except Exception as e:
+        log(f"  Could not list PRs in {Path(repo).name}: {e}")
+        return []
+
+
+def cleanup_merged(repo, cfg):
+    """Remove state entries for PRs that have already been merged."""
+    if not STATE_FILE.exists():
+        return
+    try:
+        state    = json.loads(STATE_FILE.read_text())
+        before   = len(state)
+        open_nums = {pr["number"] for pr in get_open_prs(repo, cfg)}
+        state    = [e for e in state
+                    if e["repo"] != repo or e["pr"] in open_nums]
+        if len(state) < before:
+            STATE_FILE.write_text(json.dumps(state, indent=2))
+            log(f"  Cleaned up {before - len(state)} merged PR(s) from state")
+    except Exception as e:
+        log(f"  State cleanup failed: {e}")
+
+
+def get_repo_nwo(repo, cfg):
+    """Return 'owner/repo' for a local git repo path."""
+    try:
+        return run(["gh", "repo", "view", "--json", "nameWithOwner",
+                    "--jq", ".nameWithOwner"], cfg, cwd=repo)
+    except Exception:
+        return None
+
+
+def has_unresolved_comments(repo, pr_num, cfg):
+    """True if any inline review comment has no 'Addressed in' reply."""
+    nwo = get_repo_nwo(repo, cfg)
+    if not nwo:
+        return False
+    bot_login = cfg["github"]["bot_login"]
+    try:
+        out = run(["gh", "api", f"repos/{nwo}/pulls/{pr_num}/comments",
+                   "--jq", "[.[] | {id, in_reply_to_id: .in_reply_to_id, author: .user.login, body}]"],
+                  cfg, cwd=repo)
+        comments = json.loads(out)
+    except Exception:
+        return False
+    top_level = [c for c in comments if not c.get("in_reply_to_id")]
+    replies   = [c for c in comments if c.get("in_reply_to_id")]
+    for c in top_level:
+        if c["author"] == bot_login:
+            continue
+        thread_replies = [r for r in replies if r.get("in_reply_to_id") == c["id"]]
+        if not any("Addressed in" in r["body"] for r in thread_replies):
+            return True
+    return False
+
+
+def has_unresponded_conversation_comments(repo, pr_num, cfg):
+    """True if the most recent PR conversation comment is from a non-bot user."""
+    nwo = get_repo_nwo(repo, cfg)
+    if not nwo:
+        return False
+    bot_login = cfg["github"]["bot_login"]
+    try:
+        out = run(["gh", "api", f"repos/{nwo}/issues/{pr_num}/comments",
+                   "--jq", "[.[] | {author: .user.login, created_at}]"], cfg, cwd=repo)
+        comments = json.loads(out)
+    except Exception:
+        return False
+    if not comments:
+        return False
+    user_comments = [c for c in comments if c["author"] != bot_login]
+    bot_comments  = [c for c in comments if c["author"] == bot_login]
+    if not user_comments:
+        return False
+    last_user_time = user_comments[-1]["created_at"]
+    if not bot_comments:
+        return True
+    return last_user_time > bot_comments[-1]["created_at"]
+
+
+def get_tracked_pr_numbers(repo):
+    """Return the set of PR numbers registered in the state file for this repo."""
+    if not STATE_FILE.exists():
+        return set()
+    try:
+        state = json.loads(STATE_FILE.read_text())
+        return {e["pr"] for e in state if e["repo"] == repo}
+    except Exception:
+        return set()
+
+
+def is_approved(repo, pr_num, cfg):
+    """True if the PR has any APPROVED review.
+
+    reviewDecision is only populated when branch protection requires reviews;
+    without that setting it returns "", so we also check the reviews array.
+    """
+    nwo = get_repo_nwo(repo, cfg)
+    if not nwo:
+        return False
+    try:
+        out = run(["gh", "pr", "view", str(pr_num), "-R", nwo,
+                   "--json", "reviewDecision,reviews"], cfg)
+        data = json.loads(out)
+        if data.get("reviewDecision") == "APPROVED":
+            return True
+        return any(r.get("state") == "APPROVED" for r in data.get("reviews", []))
+    except Exception:
+        return False
+
+
+def squash_merge(repo, pr_num, cfg):
+    """Squash-merge a PR and delete its branch."""
+    nwo = get_repo_nwo(repo, cfg)
+    if not nwo:
+        return False
+    try:
+        run(["gh", "pr", "merge", str(pr_num), "-R", nwo,
+             "--squash", "--delete-branch"], cfg)
+        return True
+    except Exception as e:
+        log(f"    merge failed: {e}")
+        return False
+
+
+def remove_from_state(repo, pr_num):
+    if not STATE_FILE.exists():
+        return
+    try:
+        state = json.loads(STATE_FILE.read_text())
+        state = [e for e in state if not (e["repo"] == repo and e["pr"] == pr_num)]
+        STATE_FILE.write_text(json.dumps(state, indent=2))
+    except Exception:
+        pass
+
+
+def invoke_claude(prompt, cfg, cwd):
+    cmd = [
+        str(CLAUDE_BIN), "-p", prompt,
+        "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep",
+    ]
+    log(f"  Invoking Claude (cwd={Path(cwd).name})")
+    result = subprocess.run(cmd, cwd=cwd, text=True, env=bot_env(cfg))
+    return result.returncode == 0
+
+
+def address_comments(repo, pr_num, branch, cfg):
+    invoke_claude(f"""You are the automated PR monitor for this repository.
+
+PR #{pr_num} (branch: {branch}) has unresolved inline review comments that need addressing.
+
+Steps — complete all without asking for confirmation:
+1. Read full PR context:
+     REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+     gh pr view {pr_num}
+     gh pr diff {pr_num}
+     gh api repos/$REPO/pulls/{pr_num}/comments --jq '[.[] | {{id, in_reply_to_id: .in_reply_to_id, author: .user.login, body, path, line}}]'
+2. Identify top-level comments (no in_reply_to_id) not from the bot that have
+   no reply containing "Addressed in".
+3. Check out the branch:
+     git fetch origin && git checkout {branch} && git pull origin {branch}
+4. For each unresolved comment, make the appropriate code change.
+5. Commit and push:
+     git add -A && git commit -m "review: address PR #{pr_num} feedback"
+     git push
+6. Reply to each comment you addressed:
+     SHA=$(git rev-parse HEAD)
+     gh api repos/$REPO/pulls/comments/<id>/replies -f body="Addressed in $SHA"
+
+Work in: {repo}""", cfg, repo)
+
+
+def address_conversation_comments(repo, pr_num, branch, cfg):
+    invoke_claude(f"""You are the automated PR monitor for this repository.
+
+PR #{pr_num} (branch: {branch}) has unresponded conversation comments that need a reply.
+
+Steps — complete all without asking for confirmation:
+1. Read full PR context and comment thread:
+     gh pr view {pr_num}
+     REPO=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+     gh api repos/$REPO/issues/{pr_num}/comments
+2. Identify comments from non-bot users that have no bot reply after them.
+3. For each such comment:
+   - If it requests a code change: implement it on the branch, commit, push,
+     then reply describing what was done.
+   - If it asks a question or raises a concern: reply with a clear answer.
+   Reply using:
+     gh api repos/$REPO/issues/{pr_num}/comments -f body="<your reply>"
+
+Work in: {repo}""", cfg, repo)
+
+
+def main():
+    if LOCK_FILE.exists():
+        log("Lock file present — skipping (previous run still active?)")
+        return
+
+    LOCK_FILE.touch()
+    try:
+        cfg   = load_config()
+        repos = find_repos(cfg)
+        if not repos:
+            log("No GitHub repos found")
+            return
+
+        log(f"Scanning: {', '.join(Path(r).name for r in sorted(repos))}")
+
+        for repo in sorted(repos):
+            cleanup_merged(repo, cfg)
+            prs = get_open_prs(repo, cfg)
+            if not prs:
+                continue
+
+            tracked = get_tracked_pr_numbers(repo)
+
+            for pr in prs:
+                pr_num = pr["number"]
+                branch = pr["headRefName"]
+                log(f"  {Path(repo).name} PR #{pr_num} ({branch})")
+
+                if has_unresolved_comments(repo, pr_num, cfg):
+                    log(f"    → unresolved review comments, addressing")
+                    address_comments(repo, pr_num, branch, cfg)
+                elif has_unresponded_conversation_comments(repo, pr_num, cfg):
+                    log(f"    → unresponded conversation comment, addressing")
+                    address_conversation_comments(repo, pr_num, branch, cfg)
+                elif pr_num in tracked and is_approved(repo, pr_num, cfg):
+                    log(f"    → approved, squash-merging")
+                    if squash_merge(repo, pr_num, cfg):
+                        remove_from_state(repo, pr_num)
+                        log(f"    → merged and removed from state")
+                else:
+                    log(f"    → no action needed")
+
+    except Exception as e:
+        log(f"ERROR: {e}")
+    finally:
+        LOCK_FILE.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    main()
