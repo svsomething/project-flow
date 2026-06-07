@@ -64,9 +64,10 @@ Turn the current implementation into a GitHub PR ready for human review.
 
 ## Phase 3: Create the PR
 
-All `gh` commands must run with the bot token so PRs are opened as `svsomething-bot`:
+Read config.yaml for the bot token path, then export it so PRs are opened as the bot account:
 ```bash
-export GH_TOKEN=$(cat ~/.config/bot-gh-token)
+bot_token_file=$(python3 -c "import yaml,os; c=yaml.safe_load(open(os.path.expanduser('~/repos/project-flow/config.yaml'))); print(c['github']['bot_token_file'])")
+export GH_TOKEN=$(cat $(eval echo $bot_token_file))
 ```
 
 Create the PR using this body template. Fill every section from conversation context — do not leave placeholders.
