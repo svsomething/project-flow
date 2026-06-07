@@ -1,63 +1,84 @@
-# skills
+# project-flow
 
-Personal [Claude Code](https://claude.ai/code) plugin — custom skills, commands, and agents for automating development workflows.
+A self-contained, forkable workflow for AI-assisted software development using [Claude Code](https://claude.ai/code) and GitHub Projects.
 
-## Install
-
-```bash
-git clone git@github.com:svsomething/skills.git ~/repos/skills
-claude plugin marketplace add ~/repos/skills
-claude plugin install sv-skills
-```
+Fork this repo, fill in `config.yaml`, and get a kanban board that automatically plans, implements, and reviews your issues.
 
 ## What's included
 
-| Skill | Trigger | What it does |
-|-------|---------|--------------|
-| [pr-workflow](plugins/sv-skills/skills/pr-workflow/SKILL.md) | "submit as PR", "open a PR", "push for review" | Creates a feature branch, commits, pushes, opens a GitHub PR with rich context |
-| [context-update](plugins/sv-skills/skills/context-update/SKILL.md) | "update context", or after a meaningful merge | Rewrites `CONTEXT.md` and `README.md` in the current repo to reflect recent changes |
-| [project-workflow](plugins/sv-skills/skills/project-workflow/SKILL.md) | "plan issue", "implement issue", or dispatched by project-monitor | Handles one kanban action (`plan`, `iterate`, `implement`, or `done`) for a GitHub issue on the project board |
+| Component | What it does |
+|-----------|-------------|
+| [skills/project-workflow](plugins/sv-skills/skills/project-workflow/SKILL.md) | Plans, iterates, implements, and closes GitHub issues on the project board |
+| [skills/pr-workflow](plugins/sv-skills/skills/pr-workflow/SKILL.md) | Creates feature branches, commits, pushes, and opens a GitHub PR with rich context |
+| [skills/context-update](plugins/sv-skills/skills/context-update/SKILL.md) | Keeps `CONTEXT.md` and `README.md` accurate after meaningful changes |
+| [scripts/project-monitor](scripts/project-monitor) | Cron script — polls the GitHub Project board and dispatches Claude for each active card |
+| [scripts/pr-monitor](scripts/pr-monitor) | Cron script — polls open PRs, addresses review comments, auto-merges approved PRs |
 
-## PR review workflow
+## Quickstart
 
-This plugin powers a full human-in-the-loop review loop:
+See [docs/setup.md](docs/setup.md) for the full walkthrough. The short version:
 
-1. Discuss a change with Claude → agree on a plan
-2. Claude implements on a feature branch and opens a PR (via `pr-workflow`)
-3. Review and comment on GitHub — Claude addresses comments automatically (via `pr-monitor` cron)
-4. Approve the PR and merge to main (merging is manual — `pr-monitor` addresses comments but does not merge)
+1. Fork this repo and clone it locally
+2. Fill in `config.yaml` (see inline comments; run the queries in `docs/find-ids.md` to get the GraphQL IDs)
+3. Install the Claude Code plugin:
+   ```bash
+   claude plugin marketplace add ~/repos/project-flow
+   claude plugin install sv-skills
+   ```
+4. Add the cron jobs:
+   ```
+   * * * * * python3 ~/repos/project-flow/scripts/project-monitor >> ~/.claude/project-monitor.log 2>&1
+   * * * * * python3 ~/repos/project-flow/scripts/pr-monitor >> ~/.claude/pr-monitor.log 2>&1
+   ```
+5. Create a GitHub Project with columns: Plan → Implement → In Review → Done
 
-The `pr-monitor` cron script lives in [infra/scripts/pr-monitor](https://github.com/svsomething/infra/blob/main/scripts/pr-monitor).
+## How the kanban workflow operates
 
-## Kanban workflow
-
-Issues on [GitHub Project #1](https://github.com/users/svsomething/projects/1) drive a second automation loop:
-
-1. Create an issue and move it to **Plan** — `project-monitor` detects this and dispatches Claude
-2. Claude posts a plan as a bot comment (via `project-workflow`) — the card moves to **Waiting**
-3. Review the plan and comment with feedback — `project-monitor` dispatches Claude to iterate
+1. Create a GitHub issue and move it to **Plan** — `project-monitor` detects this and dispatches Claude
+2. Claude posts a plan as a bot comment (via `project-workflow`) — you review and comment with feedback
+3. `project-monitor` dispatches Claude to iterate until you're satisfied
 4. Move the card to **Implement** — `project-monitor` dispatches Claude to implement
 5. Claude opens PRs, moves the card to **In Review**, and posts a summary comment
-6. Approve the PRs → `project-monitor` detects approval and dispatches the `done` action — Claude squash-merges all PRs, updates context, and moves the card to **Done** automatically
+6. Approve the PRs → `project-monitor` detects all approvals and dispatches the `done` action
+7. Claude squash-merges all PRs, updates context, and moves the card to **Done**
 
-The `project-monitor` cron script lives in [infra/scripts/project-monitor](https://github.com/svsomething/infra/blob/main/scripts/project-monitor).
+## How the PR review workflow operates
+
+1. Claude implements a change and opens a PR (via `pr-workflow`)
+2. Review and leave comments on GitHub
+3. `pr-monitor` detects new inline review comments and dispatches Claude to address them
+4. Claude commits fixes and replies "Addressed in \<SHA\>"
+5. Once approved, `pr-monitor` auto-squash-merges the PR
+
+## Prerequisites
+
+- [Claude Code](https://claude.ai/code) installed and configured
+- [GitHub CLI (`gh`)](https://cli.github.com/) authenticated
+- Python 3.8+ with PyYAML: `pip install pyyaml`
+- A GitHub account + a separate bot account (for posting plans and mutations)
+- An always-on machine to run the cron jobs (Linux server, Raspberry Pi, etc.)
 
 ## Directory layout
 
 ```
-skills/
-├── .claude-plugin/
-│   ├── marketplace.json          # Lists this repo as a marketplace
-│   └── plugin.json               # Top-level plugin identity
-├── plugins/
-│   └── sv-skills/
-│       ├── .claude-plugin/
-│       │   └── plugin.json       # Plugin manifest (name, version, author)
-│       ├── skills/               # Skills — triggered automatically or via /name
-│       ├── commands/             # Slash commands — user-invoked as /name
-│       └── agents/               # Sub-agents
-└── docs/
-    └── README.md                 # Authoring guide and frontmatter reference
+project-flow/
+├── config.yaml                    # Fill this in — all deployment-specific values
+├── CONTEXT.md                     # AI briefing for this repo
+├── docs/
+│   ├── README.md                  # Skill authoring guide
+│   ├── setup.md                   # Step-by-step setup for new adopters
+│   └── find-ids.md                # GraphQL queries to discover Project/field IDs
+├── scripts/
+│   ├── project-monitor            # Cron: polls project board, dispatches Claude
+│   └── pr-monitor                 # Cron: polls PRs, addresses comments, auto-merges
+└── plugins/
+    └── sv-skills/
+        ├── .claude-plugin/
+        │   └── plugin.json
+        └── skills/
+            ├── project-workflow/  # Kanban driver skill
+            ├── pr-workflow/       # PR creation skill
+            └── context-update/    # CONTEXT.md maintenance skill
 ```
 
 ## Adding a skill
@@ -65,8 +86,3 @@ skills/
 1. `mkdir plugins/sv-skills/skills/<name>`
 2. Create `SKILL.md` — see [docs/README.md](docs/README.md) for the frontmatter spec
 3. Commit and run `claude plugin marketplace update sv-skills`
-
-## Related
-
-- [infra](https://github.com/svsomething/infra) — home server infrastructure and dotfiles
-- [Claude Code docs](https://docs.claude.ai/code)

@@ -8,23 +8,30 @@ tools: Bash, Read, Write, Edit, Glob, Grep
 
 Handle one action for a GitHub issue on the mini-agentic kanban board.
 
-## Constants (do not change)
+## Phase 1: Read configuration
 
+All deployment-specific values live in `config.yaml` at the root of the `project-flow` repo. Read it first:
+
+```bash
+cat ~/repos/project-flow/config.yaml
 ```
-PROJECT_ID    = PVT_kwHOERrops4BZOd2
-STATUS_FIELD  = PVTSSF_lAHOERrops4BZOd2zhUOqxg
-OPTION_IN_REVIEW = df73e18b
-OPTION_DONE      = 98236657
-BOT_TOKEN_FILE   = ~/.config/bot-gh-token
-BOT_LOGIN        = svsomething-bot
-```
+
+Extract the values you need:
+- `github.org` → GitHub username/org (used in GraphQL queries)
+- `github.bot_login` → bot account login
+- `github.bot_token_file` → path to bot token file
+- `project.number` → project board number
+- `project.id` → project node ID for GraphQL mutations
+- `project.status_field_id` → Status field ID for GraphQL mutations
+- `project.columns.in_review` → option ID for the In Review column
+- `project.columns.done` → option ID for the Done column
 
 All `gh` commands must use the bot token:
 ```bash
-export GH_TOKEN=$(cat ~/.config/bot-gh-token)
+export GH_TOKEN=$(cat <bot_token_file from config>)
 ```
 
-## Phase 1: Determine action
+## Phase 2: Determine action
 
 Read the invoking context to identify:
 - **Issue number** and **repo** (e.g. `svsomething/infra`)
@@ -39,7 +46,7 @@ If not provided directly, run:
 gh issue view <N> -R <repo> --json number,title,body,comments
 ```
 
-## Phase 2: Execute
+## Phase 3: Execute
 
 ### Action: plan
 
@@ -88,7 +95,7 @@ Beginning work now. I will open PRs when complete."
 
 2. **Read the plan** from the issue comment thread (latest bot comment starting with `## Plan`).
 
-3. **Implement** in the local repo (e.g. `~/repos/infra` or `~/repos/skills`):
+3. **Implement** in the local repo clone (find the path using `repos.root` from config):
    - Create feature branch: `git checkout -b feat/issue-<N>-<short-description>`
    - Make all changes per the plan
    - Update `CONTEXT.md` (and `README.md` if applicable) in each affected repo to reflect what changed — so the context diff is visible in the PR alongside the code
@@ -104,7 +111,7 @@ gh pr create -R <repo> \
 <what was implemented>
 
 ## Post-merge
-- pull: \`~/repos/skills\` \`~/repos/infra\`
+- pull: \`~/repos/project-flow\` \`~/repos/infra\`
 - run: \`<shell command, e.g. docker restart homeassistant>\`"
 ```
 
@@ -114,15 +121,15 @@ gh pr create -R <repo> \
    - `~/docker-data/` is owned by `scottv` — use plain `cp`, not `sudo cp`
    - `scottv` is in the `docker` group — use `docker` commands directly, not `sudo docker`
 
-5. **Move card to In Review** via GraphQL mutation:
+5. **Move card to In Review** via GraphQL mutation (use values from config.yaml):
 ```bash
 gh api graphql -f query='
 mutation {
   updateProjectV2ItemFieldValue(input: {
-    projectId: "PVT_kwHOERrops4BZOd2"
+    projectId: "<project.id from config>"
     itemId: "<project-item-id>"
-    fieldId: "PVTSSF_lAHOERrops4BZOd2zhUOqxg"
-    value: { singleSelectOptionId: "df73e18b" }
+    fieldId: "<project.status_field_id from config>"
+    value: { singleSelectOptionId: "<project.columns.in_review from config>" }
   }) { projectV2Item { id } }
 }'
 ```
@@ -131,8 +138,8 @@ mutation {
 ```bash
 gh api graphql -f query='
 {
-  user(login: "svsomething") {
-    projectV2(number: 1) {
+  user(login: "<github.org from config>") {
+    projectV2(number: <project.number from config>) {
       items(first: 50) {
         nodes {
           id
@@ -165,9 +172,9 @@ gh issue comment <N> -R <repo> --body "## Merging PRs
 All PRs are approved. Squash-merging and wrapping up now."
 ```
 
-2. **Find all open PRs linked to the issue** — prefer the list passed in the invoking prompt (e.g. "PRs to merge: #10 in svsomething/skills, #24 in svsomething/infra"). If no list was provided, fall back to the timeline API (which covers cross-repo PRs):
+2. **Find all open PRs linked to the issue** — prefer the list passed in the invoking prompt (e.g. "PRs to merge: #10 in svsomething/project-flow, #24 in svsomething/infra"). If no list was provided, fall back to the timeline API (which covers cross-repo PRs):
 ```bash
-export GH_TOKEN=$(cat ~/.config/bot-gh-token)
+export GH_TOKEN=$(cat <bot_token_file from config>)
 gh api repos/<repo>/issues/<N>/timeline --paginate \
   --jq '[.[] | select(.event=="cross-referenced") | select(.source.issue.pull_request != null) | .source.issue | {number: .number, state: .state, repo: .repository.full_name}] | map(select(.state=="open"))'
 ```
@@ -184,9 +191,9 @@ If any PR is not approved, abort and post a comment explaining why.
 gh pr merge <PR-number> -R <pr-repo> --squash --delete-branch
 ```
 
-5. **Pull all repos to latest main:**
+5. **Pull all repos to latest main** (check `repos.root` in config for the root path):
 ```bash
-git -C ~/repos/skills checkout main && git -C ~/repos/skills pull origin main
+git -C ~/repos/project-flow checkout main && git -C ~/repos/project-flow pull origin main
 git -C ~/repos/infra  checkout main && git -C ~/repos/infra  pull origin main
 ```
 
@@ -194,33 +201,16 @@ git -C ~/repos/infra  checkout main && git -C ~/repos/infra  pull origin main
    - Extract any `- run: \`...\`` lines and execute them as shell commands
    - Skip if no `## Post-merge` section or no `run:` lines are present
 
-7. **Move card to Done:**
+7. **Move card to Done** (use values from config.yaml):
 ```bash
 gh api graphql -f query='
 mutation {
   updateProjectV2ItemFieldValue(input: {
-    projectId: "PVT_kwHOERrops4BZOd2"
+    projectId: "<project.id from config>"
     itemId: "<project-item-id>"
-    fieldId: "PVTSSF_lAHOERrops4BZOd2zhUOqxg"
-    value: { singleSelectOptionId: "98236657" }
+    fieldId: "<project.status_field_id from config>"
+    value: { singleSelectOptionId: "<project.columns.done from config>" }
   }) { projectV2Item { id } }
-}'
-```
-
-   Get the project item ID from the invoking context, or query:
-```bash
-gh api graphql -f query='
-{
-  user(login: "svsomething") {
-    projectV2(number: 1) {
-      items(first: 50) {
-        nodes {
-          id
-          content { ... on Issue { number } }
-        }
-      }
-    }
-  }
 }'
 ```
 
@@ -233,10 +223,10 @@ All PRs squash-merged, branches deleted, repos pulled to latest main.
 The card has been moved to Done."
 ```
 
-## Phase 3: Confirm
+## Phase 4: Confirm
 
 Report what was done in one concise sentence. No approval needed.
 
 ## Automated driver
 
-This skill is designed to be invoked by `project-monitor` (at `infra/scripts/project-monitor`), which polls GitHub Project #1, detects when cards move between columns, and dispatches Claude with the appropriate action (`plan`, `iterate`, `implement`, or `done`). You can also invoke it manually ("plan issue #N", "implement issue #N").
+This skill is designed to be invoked by `project-monitor` (at `project-flow/scripts/project-monitor`), which polls the GitHub Project board, detects when cards move between columns, and dispatches Claude with the appropriate action (`plan`, `iterate`, `implement`, or `done`). You can also invoke it manually ("plan issue #N", "implement issue #N").
