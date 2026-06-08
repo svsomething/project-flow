@@ -52,6 +52,9 @@ def bot_env(cfg):
     env = os.environ.copy()
     token_file = Path(cfg["github"]["bot_token_file"]).expanduser()
     if token_file.exists():
+        mode = oct(token_file.stat().st_mode)[-3:]
+        if mode != "600":
+            log(f"WARNING: {token_file} has permissions {mode}, should be 600")
         env["GH_TOKEN"] = token_file.read_text().strip()
     return env
 
@@ -165,8 +168,12 @@ def handle_plan(item_id, issue, cfg):
             cfg
         )
     else:
-        last_bot_time     = bot_comments[-1]["createdAt"]
-        new_user_comments = [c for c in user_comments if c["createdAt"] > last_bot_time]
+        last_bot_time = bot_comments[-1]["createdAt"]
+        owner_login   = cfg["github"]["org"]
+        new_user_comments = [
+            c for c in user_comments
+            if c["createdAt"] > last_bot_time and c["author"]["login"] == owner_login
+        ]
         if new_user_comments:
             log(f"  Plan: {len(new_user_comments)} new comment(s) on issue #{number}, responding")
             invoke_claude(
@@ -234,10 +241,10 @@ def get_pr_review_decision(repo, pr_number, cfg):
     if result.returncode != 0:
         return None
     try:
-        data = json.loads(result.stdout)
-        if data.get("reviewDecision") == "APPROVED":
-            return "APPROVED"
-        if any(r.get("state") == "APPROVED" for r in data.get("reviews", [])):
+        data        = json.loads(result.stdout)
+        owner_login = cfg["github"]["org"]
+        if any(r.get("state") == "APPROVED" and r.get("author", {}).get("login") == owner_login
+               for r in data.get("reviews", [])):
             return "APPROVED"
         return data.get("reviewDecision") or "PENDING"
     except Exception:
@@ -283,10 +290,13 @@ def handle_in_review(item_id, issue, cfg):
 
 def main():
     if LOCK_FILE.exists():
-        log("Lock file present — skipping")
-        return
-
-    LOCK_FILE.touch()
+        pid = LOCK_FILE.read_text().strip()
+        if pid.isdigit() and Path(f"/proc/{pid}").exists():
+            log("Lock held by live process — skipping")
+            return
+        log("Stale lock — clearing")
+        LOCK_FILE.unlink()
+    LOCK_FILE.write_text(str(os.getpid()))
     try:
         cfg   = load_config()
         items = get_plan_items(cfg)
