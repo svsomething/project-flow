@@ -1,33 +1,40 @@
 # project-flow configuration
 #
-# Fill in this file to connect project-flow to your GitHub account, repos,
-# and project board. See docs/find-ids.md for how to look up the GraphQL IDs.
+# Copy this file to config.yaml and fill in your values.
+# config.yaml is gitignored — never commit it.
 #
+# See docs/find-ids.md for how to look up the GraphQL IDs.
 # After editing, no restart is needed — scripts and skills read this file
 # on every invocation.
 
 github:
   # Your GitHub username or organization name
-  org: svsomething
+  org: YOUR_GITHUB_USERNAME
 
   # The GitHub account that posts bot comments (plan drafts, status updates).
   # Must be a separate account from your own — GitHub doesn't allow PR authors
   # to approve their own PRs, so the bot posts plans while you approve.
-  bot_login: svsomething-bot
+  bot_login: YOUR_BOT_LOGIN
 
   # Path to a file containing ONLY the bot account's GitHub personal access
   # token. Create a classic token with repo + project scopes.
   # See docs/setup.md for how to create and scope this token.
+  # Ensure the file has permissions 600: chmod 600 ~/.config/bot-gh-token
   bot_token_file: ~/.config/bot-gh-token
 
 repos:
   # Directory that contains your local repo clones.
-  # project-monitor scans this directory for GitHub repos to watch.
   root: ~/repos
 
   # Absolute path to your local clone of project-flow.
-  # Used by scripts to locate config.yaml and skills.
   project_flow: ~/repos/project-flow
+
+  # Optional: limit pr-monitor to only these repo names (relative to root).
+  # If omitted, pr-monitor scans all GitHub repos under root/.
+  # Recommended: set this to avoid monitoring repos you don't control.
+  # monitored:
+  #   - infra
+  #   - my-other-repo
 
 project:
   # The number shown in the GitHub Project URL:
@@ -36,17 +43,17 @@ project:
 
   # Node ID of the project. Run the query in docs/find-ids.md to get this.
   # Looks like: PVT_kwHO...
-  id: PVT_kwHOERrops4BZOd2
+  id: PVT_kwHO...
 
   # Node ID of the "Status" single-select field on the project.
   # Run the query in docs/find-ids.md to get this.
   # Looks like: PVTSSF_lAH...
-  status_field_id: PVTSSF_lAHOERrops4BZOd2zhUOqxg
+  status_field_id: PVTSSF_lAH...
 
   # Option IDs for each column. Run the query in docs/find-ids.md to get these.
   # Each is an 8-character hex string.
   columns:
-    plan:      d7e1fd51
-    implement: 61e4505c
-    in_review: df73e18b
-    done:      98236657
+    plan:      xxxxxxxx
+    implement: xxxxxxxx
+    in_review: xxxxxxxx
+    done:      xxxxxxxx
