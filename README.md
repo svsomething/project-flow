@@ -4,6 +4,12 @@ A self-contained, forkable workflow for AI-assisted software development using [
 
 Fork this repo, fill in `config.yaml`, and get a kanban board that automatically plans, implements, and reviews your issues.
 
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/2b5f1ea9-53e5-4ef2-8afe-96bb222c9493" alt="project-flow kanban board" width="900" />
+</p>
+
+*The mini-agentic project board — cards move automatically from Plan → Implement → In Review → Done as Claude works through each issue.*
+
 ## What's included
 
 | Component | What it does |
