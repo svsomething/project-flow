@@ -93,11 +93,17 @@ gh pr create \
 - [ ] <!-- Edge cases or regressions to check -->
 
 ## Post-merge
-<!-- Always populate this section. If no actions needed, explain why in a short sentence,
-     e.g. "No post-merge actions required — self-contained repo change, no services to restart."
-     If actions are needed, list them:
+<!-- ALWAYS populate this section. Choose EXACTLY ONE of the two cases below — they are mutually exclusive.
+
+     CASE A — no post-merge actions: write one sentence saying why, e.g.:
+       No post-merge actions required — self-contained repo change, no services to restart.
+
+     CASE B — post-merge actions exist: list them (do NOT include any "no actions" sentence):
        - pull: `~/repos/project-flow`
-       - run: `docker restart homeassistant` -->
+       - run: `docker restart homeassistant`
+
+     ⚠ Self-check before submitting: if this section lists any actions, it must NOT also
+       contain a "no post-merge actions" sentence. The two forms must never coexist. -->
 
 ---
 🤖 Implemented with [Claude Code](https://claude.ai/code)
