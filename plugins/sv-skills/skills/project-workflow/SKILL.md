@@ -117,6 +117,22 @@ gh pr create -R <repo> \
 
    Omit the `## Post-merge` section entirely when there are no post-merge steps.
 
+   **After opening each PR, register it in the pr-monitor state file** so monitoring begins immediately (without waiting for the next auto-registration cycle):
+```bash
+PR_NUM=$(gh pr view --json number --jq .number -R <repo>)
+LOCAL_REPO=$(realpath ~/repos/<repo-name>)
+STATE=~/.claude/pr-monitor-state.json
+python3 - <<PYEOF
+import json, pathlib
+f = pathlib.Path('$STATE')
+state = json.loads(f.read_text()) if f.exists() else []
+entry = {"repo": "$LOCAL_REPO", "pr": $PR_NUM}
+if entry not in state:
+    state.append(entry)
+    f.write_text(json.dumps(state, indent=2))
+PYEOF
+```
+
    **Permission notes (no sudo needed):**
    - `~/docker-data/` is owned by `scottv` — use plain `cp`, not `sudo cp`
    - `scottv` is in the `docker` group — use `docker` commands directly, not `sudo docker`
