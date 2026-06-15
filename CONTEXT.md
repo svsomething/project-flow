@@ -26,6 +26,8 @@ Previously named `svsomething/skills`.
 - **config.yaml is gitignored; config.yaml.example ships instead.** Keeps personal org/project IDs out of the public repo. Forks start from the example and fill in their own values.
 - **Owner-only access control throughout.** All autonomous triggers (iterate, comment-address, approve-to-merge) require the acting user to be `github.org` (the owner login). Enforced in `project-monitor` (iterate gate) and `pr-monitor` (comment and approval checks).
 - **Tracked-PR gate in pr-monitor.** Comment-addressing and auto-merge only run on PRs registered in the state file (opened by the bot via project-workflow). Prevents Claude from touching PRs opened by other contributors.
+- **Auto-registration of bot PRs in pr-monitor.** Each scan cycle, before the per-PR action loop, pr-monitor fetches the `author` field from `gh pr list` and calls `add_to_state()` for any open PR whose author is the bot. This makes state tracking self-healing: PRs opened by the bot (via project-workflow or manually) are picked up on the next poll even if they weren't registered at creation time.
+- **Immediate registration in project-workflow.** After `gh pr create` in the `implement` action, the skill appends the new PR to `~/.claude/pr-monitor-state.json` so monitoring begins before the next pr-monitor poll cycle.
 - **PID-aware lock files.** Both monitors write their PID to the lock file and check liveness on startup. Stale locks from crashes are cleared automatically rather than blocking all future runs.
 
 ## Config structure

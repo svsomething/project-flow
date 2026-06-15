@@ -93,13 +93,21 @@ def get_open_prs(repo, cfg):
     try:
         out = run(
             ["gh", "pr", "list", "--state", "open",
-             "--json", "number,headRefName"],
+             "--json", "number,headRefName,author"],
             cfg, cwd=repo,
         )
         return json.loads(out)
     except Exception as e:
         log(f"  Could not list PRs in {Path(repo).name}: {e}")
         return []
+
+
+def add_to_state(repo, pr_num):
+    state = json.loads(STATE_FILE.read_text()) if STATE_FILE.exists() else []
+    if not any(e["repo"] == repo and e["pr"] == pr_num for e in state):
+        state.append({"repo": repo, "pr": pr_num})
+        STATE_FILE.write_text(json.dumps(state, indent=2))
+        log(f"  Registered PR #{pr_num} in {Path(repo).name} for monitoring")
 
 
 def cleanup_merged(repo, cfg):
@@ -319,6 +327,10 @@ def main():
             if not prs:
                 continue
 
+            bot_login = cfg["github"]["bot_login"]
+            for pr in prs:
+                if pr.get("author", {}).get("login") == bot_login:
+                    add_to_state(repo, pr["number"])
             tracked = get_tracked_pr_numbers(repo)
 
             for pr in prs:
