@@ -70,7 +70,7 @@ bot_token_file=$(python3 -c "import yaml,os; c=yaml.safe_load(open(os.path.expan
 export GH_TOKEN=$(cat $(eval echo $bot_token_file))
 ```
 
-Create the PR using this body template. Fill every section from conversation context — do not leave placeholders.
+Create the PR using this body template. Fill every section from conversation context — do not leave placeholders. Always include a `## Post-merge` section — even when there is nothing to do. When there are no post-merge steps, write a short free-form sentence explaining why. Never omit the section.
 
 ```bash
 gh pr create \
@@ -91,6 +91,13 @@ gh pr create \
 ## Test Plan
 - [ ] <!-- How to verify the primary change works -->
 - [ ] <!-- Edge cases or regressions to check -->
+
+## Post-merge
+<!-- Always populate this section. If no actions needed, explain why in a short sentence,
+     e.g. "No post-merge actions required — self-contained repo change, no services to restart."
+     If actions are needed, list them:
+       - pull: `~/repos/project-flow`
+       - run: `docker restart homeassistant` -->
 
 ---
 🤖 Implemented with [Claude Code](https://claude.ai/code)

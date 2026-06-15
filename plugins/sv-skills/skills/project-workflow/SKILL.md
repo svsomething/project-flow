@@ -101,7 +101,7 @@ Beginning work now. I will open PRs when complete."
    - Update `CONTEXT.md` (and `README.md` if applicable) in each affected repo to reflect what changed — so the context diff is visible in the PR alongside the code
    - Commit everything together with descriptive messages
 
-4. **Open PR(s)** — include `Closes #<N>` in the body. If there are post-merge steps, append a `## Post-merge` section; omit it entirely if there are none:
+4. **Open PR(s)** — include `Closes #<N>` in the body. Always include a `## Post-merge` section — even when there is nothing to do. When there are no post-merge steps, write a short sentence explaining why (e.g. "No post-merge actions required — changes are self-contained and take effect after merge."). Never omit the section:
 ```bash
 gh pr create -R <repo> \
   --title "<title>" \
@@ -115,7 +115,8 @@ gh pr create -R <repo> \
 - run: \`<shell command, e.g. docker restart homeassistant>\`"
 ```
 
-   Omit the `## Post-merge` section entirely when there are no post-merge steps.
+   When there are no post-merge steps, use free-form prose to explain why, for example:
+   `No post-merge actions required — changes are self-contained within the repo and take effect after merge without any restart, pull, or deploy steps.`
 
    **After opening each PR, register it in the pr-monitor state file** so monitoring begins immediately (without waiting for the next auto-registration cycle):
 ```bash

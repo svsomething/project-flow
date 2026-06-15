@@ -28,6 +28,7 @@ Previously named `svsomething/skills`.
 - **Tracked-PR gate in pr-monitor.** Comment-addressing and auto-merge only run on PRs registered in the state file (opened by the bot via project-workflow). Prevents Claude from touching PRs opened by other contributors.
 - **Auto-registration of bot PRs in pr-monitor.** Each scan cycle, before the per-PR action loop, pr-monitor fetches the `author` field from `gh pr list` and calls `add_to_state()` for any open PR whose author is the bot. This makes state tracking self-healing: PRs opened by the bot (via project-workflow or manually) are picked up on the next poll even if they weren't registered at creation time.
 - **Immediate registration in project-workflow.** After `gh pr create` in the `implement` action, the skill appends the new PR to `~/.claude/pr-monitor-state.json` so monitoring begins before the next pr-monitor poll cycle.
+- **Mandatory `## Post-merge` section in all PRs.** Both `project-workflow` (implement action) and `pr-workflow` always include a `## Post-merge` section in the PR body. When there are no post-merge steps, free-form prose explains why. The section is never omitted — this prevents silent failures where required post-merge steps are accidentally skipped.
 - **PID-aware lock files.** Both monitors write their PID to the lock file and check liveness on startup. Stale locks from crashes are cleared automatically rather than blocking all future runs.
 
 ## Config structure
