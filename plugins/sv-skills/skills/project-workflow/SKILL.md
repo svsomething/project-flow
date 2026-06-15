@@ -101,7 +101,23 @@ Beginning work now. I will open PRs when complete."
    - Update `CONTEXT.md` (and `README.md` if applicable) in each affected repo to reflect what changed — so the context diff is visible in the PR alongside the code
    - Commit everything together with descriptive messages
 
-4. **Open PR(s)** — include `Closes #<N>` in the body. If there are post-merge steps, append a `## Post-merge` section; omit it entirely if there are none:
+4. **Open PR(s)** — include `Closes #<N>` in the body. Always include a `## Post-merge` section — even when there is nothing to do. Never omit the section. The two valid forms are mutually exclusive — never mix them:
+
+   **CASE A — no post-merge actions needed:** write one explanatory sentence, no bullet points:
+   ```
+   ## Post-merge
+   No post-merge actions required — changes are self-contained within the repo and take effect after merge without any restart, pull, or deploy steps.
+   ```
+
+   **CASE B — post-merge actions exist:** list them as bullet points, no "no actions" sentence:
+   ```
+   ## Post-merge
+   - pull: `~/repos/project-flow` `~/repos/infra`
+   - run: `<shell command, e.g. docker restart homeassistant>`
+   ```
+
+   ⚠ Self-check before opening the PR: if the `## Post-merge` section contains any bullet points or commands, it must NOT also contain a "no post-merge actions" sentence.
+
 ```bash
 gh pr create -R <repo> \
   --title "<title>" \
@@ -111,11 +127,8 @@ gh pr create -R <repo> \
 <what was implemented>
 
 ## Post-merge
-- pull: \`~/repos/project-flow\` \`~/repos/infra\`
-- run: \`<shell command, e.g. docker restart homeassistant>\`"
+<CASE A or CASE B content — never both>"
 ```
-
-   Omit the `## Post-merge` section entirely when there are no post-merge steps.
 
    **After opening each PR, register it in the pr-monitor state file** so monitoring begins immediately (without waiting for the next auto-registration cycle):
 ```bash
