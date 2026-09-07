@@ -36,8 +36,8 @@ export GH_TOKEN=$(cat <bot_token_file from config>)
 Read the invoking context to identify:
 - **Issue number** and **repo** (e.g. `svsomething/infra`)
 - **Action**: one of `plan`, `iterate`, `implement`, or `done`
-  - `plan` — no bot comment exists yet on this issue
-  - `iterate` — bot has posted a plan; there are new user comments since the last bot reply
+  - `plan` — no plan comment exists yet on this issue
+  - `iterate` — bot has posted a plan; there are new user comments since the last plan comment
   - `implement` — issue is in the Implement column
   - `done` — all PRs linked to the issue are approved; merge them and wrap up
 
@@ -46,14 +46,40 @@ If not provided directly, run:
 gh issue view <N> -R <repo> --json number,title,body,comments
 ```
 
+## Phase 2.5: Marker sentinels — load-bearing
+
+Every action posts a **start** comment before it works and a **finish** comment when it is done. Each carries an HTML-comment sentinel **as the first line of the body**, with nothing before it:
+
+| Sentinel | Posted by |
+|---|---|
+| `<!-- pf:plan-started -->` | `plan` and `iterate`, first step |
+| `<!-- pf:plan-finished -->` | the plan comment / the iterate response |
+| `<!-- pf:implement-started -->` | `implement`, first step |
+| `<!-- pf:implement-finished -->` | the implementation-complete comment |
+| `<!-- pf:done-started -->` | `done`, first step |
+| `<!-- pf:done-finished -->` | the completion summary |
+
+`project-monitor` reads these to decide whether a card is already in flight (`in_flight_state()` in `scripts/project-monitor`). It matches them on the **first line only**, which is what keeps a plan comment from blocking its own card by quoting a marker in its prose.
+
+⚠ These six lines are dispatch state, not decoration. Do not reorder them, do not put text above them, and do not change a sentinel string without changing the matching constant in `scripts/project-monitor`. Never write a sentinel into a plan or a summary body — it will be read as a state change.
+
 ## Phase 3: Execute
 
 ### Action: plan
 
-Read the issue title and body. Create a thorough implementation plan and post it as a comment:
+1. **Signal start:**
+```bash
+gh issue comment <N> -R <repo> --body "<!-- pf:plan-started -->
+## Planning
+
+Reading the issue and drafting a plan now."
+```
+
+2. Read the issue title and body. Create a thorough implementation plan and post it as a comment:
 
 ```bash
-gh issue comment <N> -R <repo> --body "## Plan
+gh issue comment <N> -R <repo> --body "<!-- pf:plan-finished -->
+## Plan
 
 <detailed plan covering:
 - What will be implemented and why
@@ -67,15 +93,24 @@ gh issue comment <N> -R <repo> --body "## Plan
 
 ### Action: iterate
 
-Read the full comment thread:
+1. **Signal start:**
+```bash
+gh issue comment <N> -R <repo> --body "<!-- pf:plan-started -->
+## Reviewing feedback
+
+Reading your comments and updating the plan now."
+```
+
+2. Read the full comment thread:
 ```bash
 gh issue view <N> -R <repo> --json comments
 ```
 
-Understand the user's latest feedback. Post a refined response — update the plan, answer questions, or confirm the approach:
+3. Understand the user's latest feedback. Post a refined response — update the plan, answer questions, or confirm the approach:
 
 ```bash
-gh issue comment <N> -R <repo> --body "<response to feedback>"
+gh issue comment <N> -R <repo> --body "<!-- pf:plan-finished -->
+<response to feedback>"
 ```
 
 If the plan is solid and no changes are needed, end with:
@@ -88,20 +123,30 @@ If the plan is solid and no changes are needed, end with:
 
 1. **Signal start:**
 ```bash
-gh issue comment <N> -R <repo> --body "## Starting implementation
+gh issue comment <N> -R <repo> --body "<!-- pf:implement-started -->
+## Starting implementation
 
 Beginning work now. I will open PRs when complete."
 ```
 
-2. **Read the plan** from the issue comment thread (latest bot comment starting with `## Plan`).
+2. **Read the plan** from the issue comment thread (latest bot comment starting with `<!-- pf:plan-finished -->` or `## Plan`).
 
-3. **Implement** in the local repo clone (find the path using `repos.root` from config):
-   - Create feature branch: `git checkout -b feat/issue-<N>-<short-description>`
+3. **Check for a previous run's leftovers before touching git.** A run that died mid-implementation is retried after an hour, so a branch, commits, or even a PR may already exist. Resume from whatever is there rather than duplicating it:
+```bash
+git -C <repo path> fetch origin
+git -C <repo path> branch -a --list '*feat/issue-<N>-*'
+gh pr list -R <repo> --state open --search "<N> in:body" --json number,headRefName,url
+```
+   - **Open PR already exists** → check out its `headRefName`, finish any unfinished work per the plan, push to the same branch, and skip step 5's `gh pr create`. Reuse the existing PR.
+   - **Branch exists, no PR** → `git checkout <branch>` (add `git pull origin <branch>` if it has a remote) and continue on it.
+   - **Neither** → create it: `git checkout -b feat/issue-<N>-<short-description>`
+
+4. **Implement** in the local repo clone (find the path using `repos.root` from config):
    - Make all changes per the plan
    - Update `CONTEXT.md` (and `README.md` if applicable) in each affected repo to reflect what changed — so the context diff is visible in the PR alongside the code
    - Commit everything together with descriptive messages
 
-4. **Open PR(s)** — include `Closes #<N>` in the body. Always include a `## Post-merge` section — even when there is nothing to do. Never omit the section. The two valid forms are mutually exclusive — never mix them:
+5. **Open PR(s)** — include `Closes #<N>` in the body. Always include a `## Post-merge` section — even when there is nothing to do. Never omit the section. The two valid forms are mutually exclusive — never mix them:
 
    **CASE A — no post-merge actions needed:** write one explanatory sentence, no bullet points:
    ```
@@ -150,7 +195,7 @@ PYEOF
    - `~/docker-data/` is owned by `scottv` — use plain `cp`, not `sudo cp`
    - `scottv` is in the `docker` group — use `docker` commands directly, not `sudo docker`
 
-5. **Move card to In Review** via GraphQL mutation (use values from config.yaml):
+6. **Move card to In Review** via GraphQL mutation (use values from config.yaml):
 ```bash
 gh api graphql -f query='
 mutation {
@@ -180,9 +225,10 @@ gh api graphql -f query='
 }'
 ```
 
-6. **Post summary comment** with PR links:
+7. **Post summary comment** with PR links:
 ```bash
-gh issue comment <N> -R <repo> --body "## Implementation complete
+gh issue comment <N> -R <repo> --body "<!-- pf:implement-finished -->
+## Implementation complete
 
 PRs opened:
 - <PR URL>
@@ -196,7 +242,8 @@ All PRs linked to the issue are approved. Squash-merge them, update all repos, r
 
 1. **Signal start:**
 ```bash
-gh issue comment <N> -R <repo> --body "## Merging PRs
+gh issue comment <N> -R <repo> --body "<!-- pf:done-started -->
+## Merging PRs
 
 All PRs are approved. Squash-merging and wrapping up now."
 ```
@@ -245,7 +292,8 @@ mutation {
 
 8. **Post completion summary:**
 ```bash
-gh issue comment <N> -R <repo> --body "## Done
+gh issue comment <N> -R <repo> --body "<!-- pf:done-finished -->
+## Done
 
 All PRs squash-merged, branches deleted, repos pulled to latest main.
 

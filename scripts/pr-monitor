@@ -159,7 +159,13 @@ def has_unresolved_comments(repo, pr_num, cfg):
         if c["author"] != owner_login:
             continue
         thread_replies = [r for r in replies if r.get("in_reply_to_id") == c["id"]]
-        if not any("Addressed in" in r["body"] for r in thread_replies):
+        # Anchored, not a substring match: the reply is posted as exactly
+        # "Addressed in <sha>", so a reply that merely quotes the phrase while
+        # discussing something else must not mark the thread resolved. Same
+        # class of bug as the board guards in #30, milder because it fails
+        # toward re-addressing rather than toward a permanently stuck card.
+        if not any((r["body"] or "").lstrip().startswith("Addressed in")
+                   for r in thread_replies):
             return True
     return False
 

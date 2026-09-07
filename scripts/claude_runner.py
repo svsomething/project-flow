@@ -64,6 +64,14 @@ AUTH_SIGNATURES = (
 ALERT_HEADING  = "## ⚠️ Claude authentication required"
 RESUME_HEADING = "## ✅ Claude authentication restored"
 
+# First-line sentinels, matching the `pf:` markers project-monitor uses for its
+# in-flight guards. These comments are bot comments like any other, so the board
+# guards have to be able to tell them apart from a plan — matching a sentinel is
+# structural, where matching the heading text breaks the moment the wording
+# changes. Both headings stay recognised for comments posted before this.
+ALERT_SENTINEL  = "<!-- pf:alert -->"
+RESUME_SENTINEL = "<!-- pf:alert-cleared -->"
+
 
 def _now():
     return datetime.now(timezone.utc)
@@ -190,8 +198,9 @@ def _post_comment(target, body, env):
 def _already_alerted(target, env, bot_login):
     """True if the bot has already posted an alert on this issue/PR.
 
-    Matches on the heading only when it *starts* a comment — a plan or summary
-    that merely quotes the heading must not suppress a real alert.
+    Matches only when the sentinel (or, for older comments, the heading) *starts*
+    the comment — a plan or summary that merely quotes it must not suppress a
+    real alert.
     """
     if not bot_login:
         return False
@@ -209,7 +218,8 @@ def _already_alerted(target, env, bot_login):
     except Exception:
         return False
     return any(c.get("author") == bot_login
-               and (c.get("body") or "").lstrip().startswith(ALERT_HEADING)
+               and (c.get("body") or "").lstrip().startswith(
+                   (ALERT_SENTINEL, ALERT_HEADING))
                for c in comments)
 
 
@@ -223,6 +233,7 @@ def notify_auth_failure(target, excerpt, env, bot_login, log=_default_log):
 
     minutes = AUTH_RETRY_INTERVAL // 60
     body = (
+        f"{ALERT_SENTINEL}\n"
         f"{ALERT_HEADING}\n\n"
         "I could not act on this card — the Claude CLI failed to authenticate "
         "on the host.\n\n"
@@ -244,6 +255,7 @@ def notify_auth_failure(target, excerpt, env, bot_login, log=_default_log):
 def notify_recovery(targets, env, log=_default_log):
     """Post the resume reply on every card that was alerted during the outage."""
     body = (
+        f"{RESUME_SENTINEL}\n"
         f"{RESUME_HEADING}\n\n"
         "Claude authenticated successfully again — resuming work on this card."
     )
