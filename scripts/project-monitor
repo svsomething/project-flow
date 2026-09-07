@@ -16,6 +16,7 @@ Logs to stdout (redirect to ~/.claude/project-monitor.log in crontab).
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -112,6 +113,20 @@ def parse_ts(value):
     """Parse a GitHub ISO-8601 timestamp into an aware datetime."""
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+# Cards request a model in natural language ("please use Opus for this one")
+# rather than a fixed directive syntax, so this scans for the three CLI
+# aliases as whole words anywhere in the issue body. First match (in reading
+# order) wins — a body mentioning two aliases doesn't get smarter disambiguation,
+# since that would need actual NLU rather than a regex.
+MODEL_KEYWORD_RE = re.compile(r'\b(opus|sonnet|haiku)\b', re.IGNORECASE)
+
+
+def parse_requested_model(body):
+    """Return the first model alias mentioned in the issue body, or None."""
+    match = MODEL_KEYWORD_RE.search(body or "")
+    return match.group(1).lower() if match else None
 
 
 def starts_with_marker(body, markers):
@@ -313,6 +328,7 @@ def invoke_claude(prompt, issue, cfg, cwd=None):
                 "number": issue["number"]},
         bot_login=cfg["github"]["bot_login"],
         log=log,
+        model=parse_requested_model(issue.get("body")),
     )
 
 

@@ -49,6 +49,8 @@ See [docs/setup.md](docs/setup.md) for the full walkthrough. The short version:
 6. Approve the PRs → `project-monitor` detects all approvals and dispatches the `done` action
 7. Claude squash-merges all PRs, updates context, and moves the card to **Done**
 
+Mention "opus", "sonnet", or "haiku" anywhere in the issue body to run that card's entire lifecycle (plan/iterate/implement/done) on that model — no fixed syntax needed, natural phrasing like "please use Opus for this one" works. If more than one alias appears, the first mention wins.
+
 ## How the PR review workflow operates
 
 1. Claude implements a change and opens a PR (via `pr-workflow`)

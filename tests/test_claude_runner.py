@@ -117,6 +117,18 @@ class RunnerTests(unittest.TestCase):
         self.run_stub(s)
         self.assertIn("  claude| hello from claude", self.logs)
 
+    # -- model passthrough --------------------------------------------------
+
+    def test_model_flag_is_passed_when_set(self):
+        s = stub(self.dir, "echo-args", 'echo "ARGS: $@"')
+        self.run_stub(s, model="opus")
+        self.assertTrue(any("--model opus" in line for line in self.logs))
+
+    def test_model_flag_is_absent_when_not_set(self):
+        s = stub(self.dir, "echo-args", 'echo "ARGS: $@"')
+        self.run_stub(s)
+        self.assertFalse(any("--model" in line for line in self.logs))
+
     # -- circuit breaker --------------------------------------------------
 
     def test_breaker_skips_subsequent_invocations(self):

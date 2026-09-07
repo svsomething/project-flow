@@ -221,5 +221,33 @@ class Timestamps(unittest.TestCase):
         self.assertEqual(pm.parse_ts("2026-09-07T12:00:00"), NOW)
 
 
+class ModelRequest(unittest.TestCase):
+    """Cards request a model via natural language anywhere in the issue body."""
+
+    def test_natural_phrasing_is_recognized(self):
+        self.assertEqual(
+            pm.parse_requested_model("I'd like this done with Opus, please."),
+            "opus")
+
+    def test_is_case_insensitive(self):
+        self.assertEqual(pm.parse_requested_model("use SONNET please"), "sonnet")
+
+    def test_mixed_case_alias(self):
+        self.assertEqual(pm.parse_requested_model("Please use HaIkU here"), "haiku")
+
+    def test_no_mention_returns_none(self):
+        self.assertIsNone(pm.parse_requested_model("Just fix the bug, thanks."))
+
+    def test_empty_body_returns_none(self):
+        self.assertIsNone(pm.parse_requested_model(""))
+        self.assertIsNone(pm.parse_requested_model(None))
+
+    def test_two_aliases_first_mention_wins(self):
+        """Not smarter disambiguation — flagged as a known limitation in the plan."""
+        self.assertEqual(
+            pm.parse_requested_model("not sonnet, use opus instead"),
+            "sonnet")
+
+
 if __name__ == "__main__":
     unittest.main()
