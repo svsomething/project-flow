@@ -132,8 +132,9 @@ branch = subprocess.check_output(["git", "branch", "--show-current"], text=True)
 pr_num = int(subprocess.check_output(
     ["gh", "pr", "view", "--json", "number", "--jq", ".number"], text=True).strip())
 
-# Remove any existing entry for this repo/branch
-state = [e for e in state if not (e["repo"] == repo and e["branch"] == branch)]
+# Remove any existing entry for this repo/PR (matches remove_from_state() in scripts/pr-monitor;
+# auto-registered entries carry only repo+pr, no branch, so we can't match on branch)
+state = [e for e in state if not (e["repo"] == repo and e.get("pr") == pr_num)]
 state.append({
     "repo": repo,
     "pr": pr_num,
