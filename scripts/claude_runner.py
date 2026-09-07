@@ -269,11 +269,15 @@ def notify_recovery(targets, env, log=_default_log):
 # ------------------------------------------------------------------ runner
 
 def run_claude(prompt, env, cwd=None, target=None, bot_login=None,
-               log=_default_log, timeout=None, claude_bin=None):
+               log=_default_log, timeout=None, claude_bin=None, model=None):
     """Invoke Claude non-interactively. Returns one of the status constants.
 
     `target` is an optional {"repo": "owner/name", "number": N} dict identifying
     the issue or PR to comment on when credentials fail.
+
+    `model` is an optional CLI model alias ("opus", "sonnet", "haiku"). When
+    set, it is passed through as `--model`; when None the CLI's own default
+    applies, unchanged from before this parameter existed.
     """
     timeout = timeout or TIMEOUT_SECONDS
     binary  = str(claude_bin or CLAUDE_BIN)
@@ -287,7 +291,10 @@ def run_claude(prompt, env, cwd=None, target=None, bot_login=None,
         record_probe_attempt()
 
     cmd = [binary, "-p", prompt, "--allowedTools", ALLOWED_TOOLS]
-    log("  Invoking Claude" + (f" (cwd={Path(cwd).name})" if cwd else ""))
+    if model:
+        cmd += ["--model", model]
+    log("  Invoking Claude" + (f" (cwd={Path(cwd).name})" if cwd else "")
+        + (f" (model={model})" if model else ""))
 
     timed_out = False
     try:
