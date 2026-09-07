@@ -18,7 +18,7 @@ import json
 import os
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 try:
@@ -34,6 +34,158 @@ LOCK_FILE    = Path.home() / ".claude" / "project-monitor.lock"
 
 sys.path.insert(0, str(_SCRIPT_DIR))
 import claude_runner  # noqa: E402  (shared hardened Claude CLI wrapper)
+
+
+# ------------------------------------------------------------- in-flight state
+#
+# Each dispatching action posts a start marker before it works and a finish
+# marker when it is done. The guards below skip a card while a start marker has
+# no matching finish marker — that is what stops two runs of the same card from
+# duplicating each other's work across polls.
+#
+# Markers are HTML-comment sentinels on the *first line* of the comment, matched
+# with startswith(). Two properties matter:
+#
+#   * First-line matching is what makes the guard safe. The previous guards were
+#     bare substring tests, so a plan comment that merely mentioned a marker
+#     phrase blocked its own card forever (#30 — this happened to #27 on
+#     2026-09-07, with no run ever attempted). A plan comment starts with
+#     "## Plan", so under first-line matching no plan can trip a guard no matter
+#     what its body quotes.
+#   * The sentinel is invisible when rendered and decouples dispatch from the
+#     human-facing heading, so the wording can change without breaking matching.
+#
+# The four posting sites live in project-workflow/SKILL.md and the two auth
+# sentinels in claude_runner.py. Both sides must move together.
+SENTINEL_PREFIX = "<!-- pf:"
+
+PLAN_START   = "<!-- pf:plan-started -->"
+PLAN_FINISH  = "<!-- pf:plan-finished -->"
+IMPL_START   = "<!-- pf:implement-started -->"
+IMPL_FINISH  = "<!-- pf:implement-finished -->"
+DONE_START   = "<!-- pf:done-started -->"
+DONE_FINISH  = "<!-- pf:done-finished -->"
+RETRY        = "<!-- pf:retry -->"
+
+# Visible headings used before the sentinels existed. Recognised as first-line
+# markers so cards already carrying a real marker keep their state across the
+# deploy. A legacy comment that only *quotes* a heading mid-body correctly stops
+# matching — that is the fix.
+LEGACY_IMPL_START  = "## Starting implementation"
+LEGACY_IMPL_FINISH = "## Implementation complete"
+LEGACY_DONE_START  = "## Merging PRs"
+LEGACY_DONE_FINISH = "## Done"
+
+IMPL_START_MARKERS  = (IMPL_START, LEGACY_IMPL_START)
+IMPL_FINISH_MARKERS = (IMPL_FINISH, LEGACY_IMPL_FINISH)
+DONE_START_MARKERS  = (DONE_START, LEGACY_DONE_START)
+DONE_FINISH_MARKERS = (DONE_FINISH, LEGACY_DONE_FINISH)
+PLAN_START_MARKERS  = (PLAN_START,)
+PLAN_FINISH_MARKERS = (PLAN_FINISH,)
+
+# Bot comments that are not plans and must never be read as one. Anything the
+# bot posts for an unrelated purpose (an auth alert, a stale-run retry, an
+# implement/done marker) counted as "a plan exists" under the old
+# "any bot comment" test — that is how an auth alert on a Plan card suppressed
+# planning permanently.
+NON_PLAN_MARKERS = (
+    SENTINEL_PREFIX,
+    LEGACY_IMPL_START, LEGACY_IMPL_FINISH,
+    LEGACY_DONE_START, LEGACY_DONE_FINISH,
+    claude_runner.ALERT_HEADING, claude_runner.RESUME_HEADING,
+)
+
+# A start marker older than this is treated as a dead run and re-dispatched.
+# Must stay comfortably above claude_runner.TIMEOUT_SECONDS: past that ceiling
+# the invocation is killed and the PID lock released, so an older marker is
+# provably not a live run. tests/test_project_monitor.py asserts the margin, so
+# raising TIMEOUT_SECONDS past 30 min fails a test rather than silently letting
+# a running card be declared stale.
+STALE_AFTER = timedelta(minutes=60)
+
+CLEAR   = "clear"
+RUNNING = "running"
+STALE   = "stale"
+
+
+def parse_ts(value):
+    """Parse a GitHub ISO-8601 timestamp into an aware datetime."""
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def starts_with_marker(body, markers):
+    """True if the comment body's first line begins with one of `markers`."""
+    return (body or "").lstrip().startswith(tuple(markers))
+
+
+def in_flight_state(bot_comments, start_markers, finish_markers, now=None):
+    """Return CLEAR / RUNNING / STALE for one start/finish marker pair.
+
+    CLEAR   — no start marker, or a finish marker was posted after the newest one
+    RUNNING — a start marker is unmatched and younger than STALE_AFTER
+    STALE   — a start marker is unmatched and older than STALE_AFTER, so the run
+              that posted it is dead and the card should be re-dispatched
+
+    `now` is a parameter so tests can exercise expiry without freezing the clock.
+    """
+    now      = now or datetime.now(timezone.utc)
+    ordered  = sorted(bot_comments, key=lambda c: c["createdAt"])
+    starts   = [c for c in ordered if starts_with_marker(c["body"], start_markers)]
+    if not starts:
+        return CLEAR, None
+
+    start = starts[-1]
+    if any(c["createdAt"] > start["createdAt"]
+           and starts_with_marker(c["body"], finish_markers) for c in ordered):
+        return CLEAR, None
+
+    if parse_ts(start["createdAt"]) < now - STALE_AFTER:
+        return STALE, start
+    return RUNNING, start
+
+
+def post_retry_notice(repo, number, action, started_at, cfg):
+    """Tell the card it is being retried, so the state change is visible on it.
+
+    Self-limiting: the re-dispatched run posts a fresh start marker, so a card
+    can produce at most one of these per STALE_AFTER.
+    """
+    minutes = int(STALE_AFTER.total_seconds() // 60)
+    body = (
+        f"{RETRY}\n"
+        "## ♻️ Retrying a stale run\n\n"
+        f"The previous `{action}` run started at {started_at} and never reported "
+        f"completion within {minutes} minutes, so the process that started it is "
+        "assumed dead. Picking this card up again now — no action needed."
+    )
+    result = subprocess.run(
+        ["gh", "api", f"repos/{repo}/issues/{number}/comments", "-f", f"body={body}"],
+        capture_output=True, text=True, env=bot_env(cfg),
+    )
+    if result.returncode != 0:
+        log(f"  ERROR: could not post retry notice on {repo}#{number}: "
+            f"{result.stderr.strip()}")
+
+
+def check_in_flight(action, item_issue, bot_comments, start_markers,
+                    finish_markers, cfg):
+    """Shared guard for all three columns. True means "skip this card".
+
+    A stale marker logs a WARN, posts the retry notice, and falls through to a
+    fresh dispatch rather than leaving the card stuck forever.
+    """
+    number = item_issue["number"]
+    repo   = item_issue["repository"]["nameWithOwner"]
+    state, start = in_flight_state(bot_comments, start_markers, finish_markers)
+    if state == RUNNING:
+        log(f"  {action}: issue #{number} already in flight, skipping")
+        return True
+    if state == STALE:
+        log(f"  WARN: retrying stale in-flight card #{number} "
+            f"({action} started {start['createdAt']})")
+        post_retry_notice(repo, number, action, start["createdAt"], cfg)
+    return False
 
 
 def load_config():
@@ -164,6 +316,19 @@ def invoke_claude(prompt, issue, cfg, cwd=None):
     )
 
 
+def is_plan_comment(comment):
+    """True if this bot comment is a posted plan (or iterate response).
+
+    A comment counts as a plan when it carries the plan-finished sentinel, or —
+    for the cards that predate the sentinels — when it carries no `pf:` sentinel
+    and is not one of the bot's other first-line markers.
+    """
+    body = (comment["body"] or "").lstrip()
+    if body.startswith(PLAN_FINISH):
+        return True
+    return not body.startswith(NON_PLAN_MARKERS)
+
+
 def handle_plan(item_id, issue, cfg):
     number    = issue["number"]
     repo      = issue["repository"]["nameWithOwner"]
@@ -172,7 +337,20 @@ def handle_plan(item_id, issue, cfg):
     bot_comments  = [c for c in comments if c["author"]["login"] == bot_login]
     user_comments = [c for c in comments if c["author"]["login"] != bot_login]
 
-    if not bot_comments:
+    # `plan` and `iterate` occupy the same slot in the state machine, so they
+    # share one marker pair. Without this guard the column had the mirror-image
+    # failure of the other two: a run that died before posting left no comment,
+    # so every subsequent poll re-dispatched it indistinguishably from the first.
+    if check_in_flight("Plan", issue, bot_comments,
+                       PLAN_START_MARKERS, PLAN_FINISH_MARKERS, cfg):
+        return None
+
+    # Deliberately "a plan exists", not "a bot comment exists": the start marker
+    # must not count as a plan, or a dead plan run would park the card in the
+    # iterate branch waiting for feedback on a plan that was never posted.
+    plan_comments = [c for c in bot_comments if is_plan_comment(c)]
+
+    if not plan_comments:
         log(f"  Plan: no plan yet for issue #{number}, creating")
         return invoke_claude(
             f"Use the project-workflow skill. Action: plan. "
@@ -180,11 +358,11 @@ def handle_plan(item_id, issue, cfg):
             issue, cfg
         )
     else:
-        last_bot_time = bot_comments[-1]["createdAt"]
-        owner_login   = cfg["github"]["org"]
+        last_plan_time = max(c["createdAt"] for c in plan_comments)
+        owner_login    = cfg["github"]["org"]
         new_user_comments = [
             c for c in user_comments
-            if c["createdAt"] > last_bot_time and c["author"]["login"] == owner_login
+            if c["createdAt"] > last_plan_time and c["author"]["login"] == owner_login
         ]
         if new_user_comments:
             log(f"  Plan: {len(new_user_comments)} new comment(s) on issue #{number}, responding")
@@ -205,8 +383,8 @@ def handle_implement(item_id, issue, cfg):
     bot_login = cfg["github"]["bot_login"]
     bot_comments = [c for c in comments if c["author"]["login"] == bot_login]
 
-    if any("Starting implementation" in c["body"] for c in bot_comments):
-        log(f"  Implement: issue #{number} already in flight, skipping")
+    if check_in_flight("Implement", issue, bot_comments,
+                       IMPL_START_MARKERS, IMPL_FINISH_MARKERS, cfg):
         return None
 
     log(f"  Implement: starting issue #{number}")
@@ -272,8 +450,8 @@ def handle_in_review(item_id, issue, cfg):
     bot_login = cfg["github"]["bot_login"]
     bot_comments = [c for c in comments if c["author"]["login"] == bot_login]
 
-    if any("## Merging PRs" in c["body"] or "## Done" in c["body"] for c in bot_comments):
-        log(f"  In Review: done action already in flight for #{number}, skipping")
+    if check_in_flight("In Review", issue, bot_comments,
+                       DONE_START_MARKERS, DONE_FINISH_MARKERS, cfg):
         return None
 
     prs      = get_linked_prs(repo, number, cfg)
