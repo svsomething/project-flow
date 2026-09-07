@@ -17,6 +17,7 @@ Logs to stdout (redirect to ~/.claude/project-monitor.log in crontab).
 import json
 import os
 import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -30,7 +31,9 @@ except ImportError:
 _SCRIPT_DIR = Path(__file__).resolve().parent
 CONFIG_FILE  = _SCRIPT_DIR.parent / "config.yaml"
 LOCK_FILE    = Path.home() / ".claude" / "project-monitor.lock"
-CLAUDE_BIN   = Path.home() / ".npm-global" / "bin" / "claude"
+
+sys.path.insert(0, str(_SCRIPT_DIR))
+import claude_runner  # noqa: E402  (shared hardened Claude CLI wrapper)
 
 
 def load_config():
@@ -144,12 +147,21 @@ def move_card(item_id, status_name, cfg):
     log(f"  Moved card to {status_name}")
 
 
-def invoke_claude(prompt, cfg, cwd=None):
-    """Invoke Claude non-interactively with the project-workflow skill available."""
-    cmd = [str(CLAUDE_BIN), "-p", prompt,
-           "--allowedTools", "Bash,Read,Write,Edit,Glob,Grep"]
-    log(f"  Invoking Claude")
-    subprocess.run(cmd, cwd=cwd or Path.home(), env=bot_env(cfg), text=True)
+def invoke_claude(prompt, issue, cfg, cwd=None):
+    """Invoke Claude non-interactively with the project-workflow skill available.
+
+    Returns a claude_runner status. Failures are logged with an ERROR: prefix and,
+    for credential failures, flagged as a comment on the issue.
+    """
+    return claude_runner.run_claude(
+        prompt,
+        bot_env(cfg),
+        cwd=cwd or Path.home(),
+        target={"repo": issue["repository"]["nameWithOwner"],
+                "number": issue["number"]},
+        bot_login=cfg["github"]["bot_login"],
+        log=log,
+    )
 
 
 def handle_plan(item_id, issue, cfg):
@@ -162,10 +174,10 @@ def handle_plan(item_id, issue, cfg):
 
     if not bot_comments:
         log(f"  Plan: no plan yet for issue #{number}, creating")
-        invoke_claude(
+        return invoke_claude(
             f"Use the project-workflow skill. Action: plan. "
             f"Issue #{number} in {repo} is in the Plan column and has no plan yet.",
-            cfg
+            issue, cfg
         )
     else:
         last_bot_time = bot_comments[-1]["createdAt"]
@@ -176,13 +188,14 @@ def handle_plan(item_id, issue, cfg):
         ]
         if new_user_comments:
             log(f"  Plan: {len(new_user_comments)} new comment(s) on issue #{number}, responding")
-            invoke_claude(
+            return invoke_claude(
                 f"Use the project-workflow skill. Action: iterate. "
                 f"Issue #{number} in {repo} is in the Plan column and has new user comments to respond to.",
-                cfg
+                issue, cfg
             )
         else:
             log(f"  Plan: no new comments on issue #{number}, waiting")
+    return None
 
 
 def handle_implement(item_id, issue, cfg):
@@ -194,17 +207,17 @@ def handle_implement(item_id, issue, cfg):
 
     if any("Starting implementation" in c["body"] for c in bot_comments):
         log(f"  Implement: issue #{number} already in flight, skipping")
-        return
+        return None
 
     log(f"  Implement: starting issue #{number}")
     repos_root = Path(cfg["repos"]["root"]).expanduser()
     repo_name  = repo.split("/")[-1]
     repo_path  = repos_root / repo_name
-    invoke_claude(
+    return invoke_claude(
         f"Use the project-workflow skill. Action: implement. "
         f"Issue #{number} in {repo} is in the Implement column. "
         f"Project item ID: {item_id}.",
-        cfg,
+        issue, cfg,
         repo_path if repo_path.exists() else None
     )
 
@@ -261,29 +274,29 @@ def handle_in_review(item_id, issue, cfg):
 
     if any("## Merging PRs" in c["body"] or "## Done" in c["body"] for c in bot_comments):
         log(f"  In Review: done action already in flight for #{number}, skipping")
-        return
+        return None
 
     prs      = get_linked_prs(repo, number, cfg)
     open_prs = [pr for pr in prs if pr.get("state") == "open"]
     if not open_prs:
-        return
+        return None
 
     decisions = [get_pr_review_decision(pr.get("repo", repo), pr["number"], cfg) for pr in open_prs]
     if not all(d == "APPROVED" for d in decisions):
         log(f"  In Review: not all PRs approved for #{number}, waiting")
-        return
+        return None
 
     log(f"  In Review: all PRs approved for #{number}, invoking done action")
     pr_list    = ", ".join(f"#{pr['number']} in {pr.get('repo', repo)}" for pr in open_prs)
     repos_root = Path(cfg["repos"]["root"]).expanduser()
     repo_name  = repo.split("/")[-1]
     repo_path  = repos_root / repo_name
-    invoke_claude(
+    return invoke_claude(
         f"Use the project-workflow skill. Action: done. "
         f"Issue #{number} in {repo} has all PRs approved. "
         f"PRs to merge: {pr_list}. "
         f"Project item ID: {item_id}.",
-        cfg,
+        issue, cfg,
         repo_path if repo_path.exists() else None
     )
 
@@ -319,11 +332,16 @@ def main():
             log(f"  #{issue['number']} '{issue['title']}' [{status}]")
 
             if status == "Plan":
-                handle_plan(item["id"], issue, cfg)
+                outcome = handle_plan(item["id"], issue, cfg)
             elif status == "Implement":
-                handle_implement(item["id"], issue, cfg)
+                outcome = handle_implement(item["id"], issue, cfg)
             elif status == "In Review":
-                handle_in_review(item["id"], issue, cfg)
+                outcome = handle_in_review(item["id"], issue, cfg)
+            else:
+                outcome = None
+
+            if outcome is not None and outcome != claude_runner.OK:
+                log(f"  Card #{issue['number']} not advanced ({outcome})")
 
     except Exception as e:
         log(f"ERROR: {e}")
