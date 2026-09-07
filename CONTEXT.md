@@ -11,7 +11,9 @@ Previously named `svsomething/skills`.
 ## Current state
 
 - **Three skills:** `pr-workflow` (create PR with rich context), `context-update` (maintain CONTEXT.md and README.md), and `project-workflow` (handle `plan`, `iterate`, `implement`, and `done` actions for kanban issues).
-- **Two cron scripts:** `scripts/project-monitor` (polls GitHub Project board, dispatches Claude) and `scripts/pr-monitor` (polls open PRs, addresses review comments, auto-merges approved PRs).
+- **Two cron scripts:** `scripts/project-monitor` (polls GitHub Project board, dispatches Claude) and `scripts/pr-monitor` (polls open PRs, addresses review comments, auto-merges approved PRs). Both invoke Claude through the shared `scripts/claude_runner.py`.
+- **One shared module:** `scripts/claude_runner.py` — hardened Claude CLI wrapper (timeout, exit-code and auth-failure detection, circuit breaker, GitHub notification).
+- **Tests:** `tests/test_claude_runner.py`, plain `unittest`, no extra dependencies. Run with `python3 -m unittest discover -s tests`.
 - **One config file:** `config.yaml` at repo root (gitignored) — all deployment-specific values. Copy from `config.yaml.example` and fill in once; scripts and skills read it at runtime.
 - Plugin installed locally via `claude plugin marketplace add ~/repos/project-flow`.
 - Repo is public at `svsomething/project-flow`.
@@ -30,6 +32,13 @@ Previously named `svsomething/skills`.
 - **Immediate registration in project-workflow.** After `gh pr create` in the `implement` action, the skill appends the new PR to `~/.claude/pr-monitor-state.json` so monitoring begins before the next pr-monitor poll cycle.
 - **Mandatory `## Post-merge` section in all PRs.** Both `project-workflow` (implement action) and `pr-workflow` always include a `## Post-merge` section in the PR body. When there are no post-merge steps, free-form prose explains why. The section is never omitted — this prevents silent failures where required post-merge steps are accidentally skipped.
 - **PID-aware lock files.** Both monitors write their PID to the lock file and check liveness on startup. Stale locks from crashes are cleared automatically rather than blocking all future runs.
+- **Fail-loud Claude invocation.** Both monitors call `claude_runner.run_claude()` instead of a bare `subprocess.run(...)` whose result was discarded. Every non-`OK` outcome logs a line starting with `ERROR:` and returns a status (`OK` / `AUTH_FAILED` / `FAILED` / `TIMEOUT` / `SKIPPED`) that the caller acts on. Before this, a total failure logged the same `Invoking Claude` line as a success and retried silently every minute (16 wasted cycles in the 2026-06-22 incident).
+- **Auth detection does not trust the exit code alone.** `run_claude` matches a list of credential-failure signatures in the *captured output* and independently treats a non-zero exit and a timeout as failures. It therefore fires whether the CLI exits 1, exits 0, or hangs — the CLI's behaviour on an expired credential could not be pinned down, so the detector does not depend on it. The signature list is a heuristic: if the CLI's wording changes, a future auth failure falls through to the generic `FAILED` path — still loud, just without the auth-specific comment.
+- **Auth circuit breaker.** State in `~/.claude/claude-auth-state.json`, shared by both monitors. Once `AUTH_FAILED` is recorded they skip invoking Claude entirely and log `SKIP: Claude auth broken since <ts>` — every invocation while credentials are dead is guaranteed to fail. Every `AUTH_RETRY_INTERVAL` (900s) one invocation is let through as a live probe; success clears the state and logs `RECOVERED`. Board and PR polling keep running normally — they use the bot's `GH_TOKEN`, which is unaffected.
+- **Auth failures are flagged on the card.** The bot's GitHub token is independent of Claude's credentials, so commenting still works when Claude auth is dead. On the first `AUTH_FAILED` the bot posts a `## ⚠️ Claude authentication required` comment on the issue (project-monitor) or PR (pr-monitor), deduped via the `notified` list in the breaker state plus a scan of existing bot comments. On recovery it replies `## ✅ Claude authentication restored` on every alerted card and clears the state, so a future outage can notify again. The card deliberately does not change columns — leaving it in place is what lets work resume automatically.
+- **Alert-marker scan is anchored.** The duplicate-alert check matches only comments that *start with* the alert heading. Unanchored substring guards elsewhere in `project-monitor` (see #30) have blocked cards whose plan merely quoted a marker phrase; new markers avoid repeating that.
+- **Claude output is captured, not streamed.** `run_claude` uses `capture_output=True` so it can inspect the text, then re-emits it to the log prefixed with `  claude| `. The log keeps everything it showed before, attributable and indented, but appears only when the invocation finishes rather than live.
+- **Timeouts are enforced.** `TIMEOUT_SECONDS = 1800`. A hung `claude` used to hold the monitor's PID lock indefinitely and wedge *all* board processing, not just the one card.
 
 ## Config structure
 
@@ -76,3 +85,6 @@ claude plugin marketplace update sv-skills           # picks up new skills after
 - The crontab must point to `~/repos/project-flow/scripts/` (not the old infra path).
 - `config.yaml` is gitignored — never commit it. `config.yaml.example` is the committed template.
 - `config.yaml` is the source of truth for all IDs — never hardcode them in skills or scripts.
+- `grep 'ERROR:\|SKIP:\|RECOVERED' ~/.claude/project-monitor.log` is the fast way to see whether the monitors are actually working. A run that logs `Invoking Claude` and nothing else is a success; anything broken says so explicitly.
+- If both monitors go quiet and the log shows `SKIP: Claude auth broken since ...`, run `claude` on the host to re-authenticate. Work resumes on its own within ~15 minutes; deleting `~/.claude/claude-auth-state.json` resumes immediately.
+- The crontab runs the scripts straight out of the working tree, so a checked-out feature branch is what cron executes. Keep `scripts/` importable on every branch.

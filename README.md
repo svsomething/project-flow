@@ -19,6 +19,7 @@ Fork this repo, fill in `config.yaml`, and get a kanban board that automatically
 | [skills/context-update](plugins/sv-skills/skills/context-update/SKILL.md) | Keeps `CONTEXT.md` and `README.md` accurate after meaningful changes |
 | [scripts/project-monitor](scripts/project-monitor) | Cron script — polls the GitHub Project board and dispatches Claude for each active card |
 | [scripts/pr-monitor](scripts/pr-monitor) | Cron script — polls open PRs, addresses review comments, auto-merges approved PRs |
+| [scripts/claude_runner.py](scripts/claude_runner.py) | Shared by both monitors — invokes the Claude CLI with a timeout, detects failures, and flags broken credentials on the card |
 
 ## Quickstart
 
@@ -56,6 +57,22 @@ See [docs/setup.md](docs/setup.md) for the full walkthrough. The short version:
 4. Claude commits fixes and replies "Addressed in \<SHA\>"
 5. Once approved, `pr-monitor` auto-squash-merges the PR
 
+## When Claude can't authenticate
+
+The monitors run unattended, so a failed invocation has to announce itself rather than retry silently.
+
+1. Both monitors invoke Claude through `scripts/claude_runner.py`, which enforces a 30-minute timeout and inspects the captured output. Any failure logs a line starting with `ERROR:` — `grep 'ERROR:' ~/.claude/project-monitor.log` tells you at a glance whether things are working.
+2. If the output looks like a credential failure, a circuit breaker opens (`~/.claude/claude-auth-state.json`). Further invocations are skipped with `SKIP: Claude auth broken since <ts>` instead of failing once a minute.
+3. The bot comments **⚠️ Claude authentication required** on the affected card. The bot's GitHub token is separate from Claude's credentials, so this still works while Claude auth is dead.
+
+Run `claude` on the host and re-authenticate. Every 15 minutes one invocation is let through as a probe; on success the breaker clears, the log says `RECOVERED`, the bot replies on the card, and work resumes with no action from you. Cards never change columns because of an auth outage. To resume immediately, delete `~/.claude/claude-auth-state.json`.
+
+## Running the tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
 ## Prerequisites
 
 - [Claude Code](https://claude.ai/code) installed and configured
@@ -76,7 +93,10 @@ project-flow/
 │   └── find-ids.md                # GraphQL queries to discover Project/field IDs
 ├── scripts/
 │   ├── project-monitor            # Cron: polls project board, dispatches Claude
-│   └── pr-monitor                 # Cron: polls PRs, addresses comments, auto-merges
+│   ├── pr-monitor                 # Cron: polls PRs, addresses comments, auto-merges
+│   └── claude_runner.py           # Shared: hardened Claude CLI wrapper + auth breaker
+├── tests/
+│   └── test_claude_runner.py      # python3 -m unittest discover -s tests
 └── plugins/
     └── sv-skills/
         ├── .claude-plugin/
