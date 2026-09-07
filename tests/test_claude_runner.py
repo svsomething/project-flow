@@ -169,7 +169,10 @@ class RunnerTests(unittest.TestCase):
 
         self.assertEqual(len(self.posted), 1)
         _, body = self.posted[0]
-        self.assertTrue(body.startswith(cr.ALERT_HEADING))
+        # The sentinel leads, so project-monitor's guards can tell an alert from
+        # a plan without matching the heading text.
+        self.assertTrue(body.startswith(cr.ALERT_SENTINEL))
+        self.assertIn(cr.ALERT_HEADING, body)
         self.assertIn(INCIDENT_LINE, body)
         self.assertIn("re-authenticate", body)
 
@@ -189,7 +192,8 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(len(self.posted), 2)
         recovery_target, recovery_body = self.posted[1]
         self.assertEqual(recovery_target, target)
-        self.assertTrue(recovery_body.startswith(cr.RESUME_HEADING))
+        self.assertTrue(recovery_body.startswith(cr.RESUME_SENTINEL))
+        self.assertIn(cr.RESUME_HEADING, recovery_body)
 
         # State cleared, so a future outage can notify again.
         self.run_stub(auth, target=target, bot_login="svsomething-bot")
