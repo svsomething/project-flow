@@ -93,6 +93,11 @@ def find_repos(cfg):
 
 
 def get_open_prs(repo, cfg):
+    """Return the repo's open PRs, or None if they could not be listed.
+
+    None and [] mean different things: [] is "no open PRs", None is "couldn't
+    check". Callers must not treat a failed lookup as an empty repo.
+    """
     try:
         out = run(
             ["gh", "pr", "list", "--state", "open",
@@ -102,7 +107,7 @@ def get_open_prs(repo, cfg):
         return json.loads(out)
     except Exception as e:
         log(f"  Could not list PRs in {Path(repo).name}: {e}")
-        return []
+        return None
 
 
 def add_to_state(repo, pr_num):
@@ -113,14 +118,19 @@ def add_to_state(repo, pr_num):
         log(f"  Registered PR #{pr_num} in {Path(repo).name} for monitoring")
 
 
-def cleanup_merged(repo, cfg):
-    """Remove state entries for PRs that have already been merged."""
-    if not STATE_FILE.exists():
+def cleanup_merged(repo, open_prs):
+    """Remove state entries for PRs that are no longer open.
+
+    open_prs is the result of get_open_prs(). When it is None the lookup
+    failed, so nothing is known about which PRs are open — skip rather than
+    drop every tracked PR for the repo.
+    """
+    if open_prs is None or not STATE_FILE.exists():
         return
     try:
         state    = json.loads(STATE_FILE.read_text())
         before   = len(state)
-        open_nums = {pr["number"] for pr in get_open_prs(repo, cfg)}
+        open_nums = {pr["number"] for pr in open_prs}
         state    = [e for e in state
                     if e["repo"] != repo or e["pr"] in open_nums]
         if len(state) < before:
@@ -339,8 +349,8 @@ def main():
         log(f"Scanning: {', '.join(Path(r).name for r in sorted(repos))}")
 
         for repo in sorted(repos):
-            cleanup_merged(repo, cfg)
             prs = get_open_prs(repo, cfg)
+            cleanup_merged(repo, prs)
             if not prs:
                 continue
 
