@@ -72,6 +72,12 @@ export GH_TOKEN=$(cat $(eval echo $bot_token_file))
 
 Create the PR using this body template. Fill every section from conversation context — do not leave placeholders. Always include a `## Post-merge` section — even when there is nothing to do. When there are no post-merge steps, write a short free-form sentence explaining why. Never omit the section.
 
+**Post-merge steps are executed automatically.** When pr-monitor merges the PR, it fast-forwards the repo's local checkout to the default branch, then executes the section's steps in order and posts the results as a PR comment:
+- `- run: \`<cmd>\`` runs with `bash -c` from the repo root (10-minute timeout, no bot token in the environment). It stops at the first failure, so write each command to be safe to re-run.
+- `- pull: \`<path>\`` fast-forwards that checkout to its default branch.
+- `- manual: <text>` is **never run**, only listed for a human. Use it for UI clicks or anything needing judgement or sudo.
+- Any other list item (e.g. `- verify: ...`) is reported as unrecognised and not run.
+
 ```bash
 gh pr create \
   --title "<concise title, under 70 chars>" \
@@ -153,4 +159,4 @@ EOF
 Output:
 - PR URL (from `gh pr view --json url --jq .url`)
 - Branch name
-- One-line reminder: "The PR monitor will check for review comments every 5 minutes and address them automatically. Approve the PR on GitHub to trigger auto-merge."
+- One-line reminder: "The PR monitor will check for review comments every 5 minutes and address them automatically. Approve the PR on GitHub to trigger auto-merge; its Post-merge steps then run automatically and the results are posted on the PR."

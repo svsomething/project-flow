@@ -2,7 +2,8 @@
 """
 pr-monitor — scans ~/repos/ for open GitHub PRs, addresses unresolved
 review comments, and auto-merges PRs that are registered in the state
-file and have been approved with no outstanding comments.
+file and have been approved with no outstanding comments. After merging, it
+runs the PR's `## Post-merge` steps and reports the results on the PR.
 
 Also cleans up state entries for PRs that have already been merged.
 
@@ -13,6 +14,7 @@ Logs to stdout (redirect to ~/.claude/pr-monitor.log in crontab).
 
 import json
 import os
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -261,6 +263,172 @@ def remove_from_state(repo, pr_num):
         pass
 
 
+POST_MERGE_MARKER  = "<!-- pf:post-merge -->"
+POST_MERGE_TIMEOUT = 600   # seconds, per run: step
+POST_MERGE_KINDS   = ("pull", "run", "manual")
+
+
+def parse_post_merge(body):
+    """Return the steps in a PR body's `## Post-merge` section as (kind, value).
+
+    Recognised list items:
+        - pull: `~/repos/a` `~/repos/b`   -> ("pull", ["~/repos/a", "~/repos/b"])
+        - run: `cmd`                       -> ("run", "cmd")
+        - manual: free text                -> ("manual", "free text")
+    Other list items come back as ("unknown", text) so they get reported, not
+    silently dropped. Non-list lines (the "No post-merge actions required"
+    sentence) are ignored. HTML comments are stripped first: the PR template
+    keeps example steps inside one, and those must never run.
+    """
+    body = re.sub(r"<!--.*?-->", "", body or "", flags=re.S)
+    steps, in_section = [], False
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_section = stripped[3:].strip().lower() == "post-merge"
+            continue
+        if not in_section:
+            continue
+        if stripped == "---":
+            break
+        if not stripped.startswith("- "):
+            continue
+        item = stripped[2:].strip()
+        kind, sep, value = item.partition(":")
+        kind, value = kind.strip().lower(), value.strip()
+        if not sep or kind not in POST_MERGE_KINDS:
+            steps.append(("unknown", item))
+        elif kind == "pull":
+            steps.append(("pull", re.findall(r"`([^`]+)`", value) or value.split()))
+        elif kind == "run":
+            if len(value) >= 2 and value.startswith("`") and value.endswith("`"):
+                value = value[1:-1]
+            steps.append(("run", value))
+        else:
+            steps.append(("manual", value))
+    return steps
+
+
+def sync_checkout(path):
+    """Fast-forward a local clone to its default branch.
+
+    Post-merge steps copy files out of the local clone, which is usually still
+    on the just-merged feature branch, so it must be moved to the merged
+    default branch first. Refuses when tracked files have uncommitted changes.
+    Returns None on success, or a reason string.
+    """
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=path, capture_output=True,
+                              text=True, timeout=120)
+
+    if not (Path(path) / ".git").exists():
+        return f"{path} is not a git checkout"
+    if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
+        return f"{path} has uncommitted changes to tracked files"
+    head = git("symbolic-ref", "--short", "refs/remotes/origin/HEAD").stdout.strip()
+    default = head.split("/", 1)[1] if "/" in head else "main"
+    for args in (("fetch", "origin", "--prune"),
+                 ("checkout", default),
+                 ("merge", "--ff-only", f"origin/{default}")):
+        result = git(*args)
+        if result.returncode != 0:
+            return f"git {' '.join(args)} failed in {path}: {result.stderr.strip()}"
+    return None
+
+
+def _output_tail(text, lines=20):
+    tail = "\n".join((text or "").strip().splitlines()[-lines:])
+    return tail.replace("```", "'''")
+
+
+def run_post_merge(repo, pr_num, cfg):
+    """Run a just-merged PR's `## Post-merge` steps and report on the PR.
+
+    Only called for PRs this monitor merged, i.e. tracked PRs the owner
+    approved; the author must also be the bot or the owner. `run:` commands
+    get the ambient environment minus the bot token, with the repo root as cwd.
+    Stops at the first failed pull/run step.
+    """
+    nwo = get_repo_nwo(repo, cfg)
+    if not nwo:
+        log("    → post-merge: could not resolve repo, skipped")
+        return
+    try:
+        pr = json.loads(run(["gh", "pr", "view", str(pr_num), "-R", nwo,
+                             "--json", "body,author"], cfg))
+    except Exception as e:
+        log(f"    → post-merge: could not read PR body: {e}")
+        return
+    author = pr.get("author", {}).get("login")
+    if author not in (cfg["github"]["bot_login"], cfg["github"]["org"]):
+        log(f"    → post-merge: PR author {author} is not the bot or owner, skipped")
+        return
+
+    steps = parse_post_merge(pr.get("body"))
+    if not steps:
+        log("    → post-merge: no steps")
+        return
+
+    results = []   # (ok: True/False/None, label, detail); None = not run
+    failed  = None
+    if any(kind in ("pull", "run") for kind, _ in steps):
+        failed = sync_checkout(repo)
+        results.append((failed is None, f"sync `{repo}` to default branch", failed or ""))
+
+    step_env = {k: v for k, v in os.environ.items() if k != "GH_TOKEN"}
+    for kind, value in steps:
+        if kind == "manual":
+            results.append((None, f"manual: {value}", "needs a human"))
+            continue
+        if kind == "unknown":
+            results.append((None, value, "unrecognised step, not run"))
+            continue
+        if kind == "pull":
+            for p in value:
+                label = f"pull `{p}`"
+                if failed:
+                    results.append((None, label, "skipped after an earlier failure"))
+                    continue
+                failed = sync_checkout(str(Path(p).expanduser()))
+                results.append((failed is None, label, failed or ""))
+            continue
+        label = f"run `{value}`"
+        if failed:
+            results.append((None, label, "skipped after an earlier failure"))
+            continue
+        try:
+            r = subprocess.run(["bash", "-c", value], cwd=repo, env=step_env,
+                               capture_output=True, text=True, timeout=POST_MERGE_TIMEOUT)
+            output = (r.stdout or "") + (r.stderr or "")
+            if r.returncode != 0:
+                failed = f"exit {r.returncode}"
+                results.append((False, label, f"exit {r.returncode}\n{_output_tail(output)}"))
+            else:
+                results.append((True, label, _output_tail(output)))
+        except subprocess.TimeoutExpired:
+            failed = f"timed out after {POST_MERGE_TIMEOUT}s"
+            results.append((False, label, failed))
+
+    for ok, label, detail in results:
+        status = {True: "ok", False: "FAILED", None: "not run"}[ok]
+        log(f"    → post-merge {status}: {label}" + (f" ({detail.splitlines()[0]})" if ok is False and detail else ""))
+
+    icon  = {True: "✅", False: "❌", None: "⏸️"}
+    lines = [POST_MERGE_MARKER,
+             "## Post-merge " + ("❌ failed" if failed else "✅ done"), ""]
+    for ok, label, detail in results:
+        lines.append(f"- {icon[ok]} {label}")
+        if detail:
+            lines += ["  ```", *("  " + l for l in detail.splitlines()), "  ```"]
+    if failed:
+        lines += ["", "Remaining steps were not run — fix and run them by hand."]
+    try:
+        run(["gh", "api", f"repos/{nwo}/issues/{pr_num}/comments",
+             "-f", "body=" + "\n".join(lines)], cfg)
+    except Exception as e:
+        log(f"    → post-merge: could not comment on PR: {e}")
+
+
 def invoke_claude(prompt, cfg, cwd, pr_num=None):
     """Invoke Claude non-interactively. Returns a claude_runner status.
 
@@ -380,6 +548,7 @@ def main():
                     if squash_merge(repo, pr_num, cfg):
                         remove_from_state(repo, pr_num)
                         log(f"    → merged and removed from state")
+                        run_post_merge(repo, pr_num, cfg)
                 else:
                     log(f"    → no action needed")
 

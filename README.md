@@ -18,7 +18,7 @@ Fork this repo, fill in `config.yaml`, and get a kanban board that automatically
 | [skills/pr-workflow](plugins/sv-skills/skills/pr-workflow/SKILL.md) | Creates feature branches, commits, pushes, and opens a GitHub PR with rich context |
 | [skills/context-update](plugins/sv-skills/skills/context-update/SKILL.md) | Keeps `CONTEXT.md` and `README.md` accurate after meaningful changes |
 | [scripts/project-monitor](scripts/project-monitor) | Cron script — polls the GitHub Project board and dispatches Claude for each active card |
-| [scripts/pr-monitor](scripts/pr-monitor) | Cron script — polls open PRs, addresses review comments, auto-merges approved PRs |
+| [scripts/pr-monitor](scripts/pr-monitor) | Cron script — polls open PRs, addresses review comments, auto-merges approved PRs and runs their `## Post-merge` steps |
 | [scripts/claude_runner.py](scripts/claude_runner.py) | Shared by both monitors — invokes the Claude CLI with a timeout, detects failures, and flags broken credentials on the card |
 
 ## Quickstart
@@ -57,7 +57,7 @@ Mention "opus", "sonnet", or "haiku" anywhere in the issue body to run that card
 2. Review and leave comments on GitHub
 3. `pr-monitor` detects new inline review comments and dispatches Claude to address them
 4. Claude commits fixes and replies "Addressed in \<SHA\>"
-5. Once approved, `pr-monitor` auto-squash-merges the PR
+5. Once approved, `pr-monitor` auto-squash-merges the PR, runs its `## Post-merge` steps, and comments the results on the PR
 
 ## When Claude can't authenticate
 
