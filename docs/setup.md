@@ -97,7 +97,7 @@ Both should log "No active items" / "No GitHub repos found" (or similar) without
 2. Register the PR with the monitor by running the snippet at the end of the `pr-workflow` skill
 3. Leave inline review comments on GitHub
 4. Claude addresses comments and replies "Addressed in \<SHA\>" within ~1 minute
-5. Approve the PR → Claude auto-merges it
+5. Approve the PR → Claude auto-merges it and runs its `## Post-merge` steps (results posted as a PR comment)
 
 ## Troubleshooting
 

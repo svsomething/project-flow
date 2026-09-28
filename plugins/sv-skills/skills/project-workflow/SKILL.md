@@ -163,6 +163,8 @@ gh pr list -R <repo> --state open --search "<N> in:body" --json number,headRefNa
 
    ⚠ Self-check before opening the PR: if the `## Post-merge` section contains any bullet points or commands, it must NOT also contain a "no post-merge actions" sentence.
 
+   `run:` and `pull:` steps are **executed automatically**, whichever path merges the PR: pr-monitor on approval, or the `done` action below. Use `- manual: <text>` for anything a human must do; it's listed, never run.
+
 ```bash
 gh pr create -R <repo> \
   --title "<title>" \
